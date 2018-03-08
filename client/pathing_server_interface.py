@@ -1,5 +1,5 @@
-
 # TODO (Toby): I added what I need from this, so go ahead and fill out the rest
+from Crypto.PublicKey import RSA
 
 
 class PathingServerInterface(object):
@@ -17,6 +17,8 @@ class PathingServerInterface(object):
         """get_route
 
         returns:
-            list of 3 3-tuples, one for each tor router, with ip (str), port (str), and pubkey (str)
+            list of 3 3-tuples, one for each tor router, with ip (str), port (str), and pubkey (RSA pubkey)
         """
-        return [("1.1.1.1", "10", "PUBKEY1"), ("2.2.2.2", "20", "PUBKEY2"), ("3.3.3.3", "30", "PUBKEY3")]
+        return [("1.1.1.1", "10", RSA.generate(2048).publickey()),
+                ("2.2.2.2", "20", RSA.generate(2048).publickey()),
+                ("3.3.3.3", "30", RSA.generate(2048).publickey())]
