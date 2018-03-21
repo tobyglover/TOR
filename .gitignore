@@ -102,3 +102,4 @@ ENV/
 
 # misc
 .idea
+*.pem
