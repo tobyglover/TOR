@@ -1,5 +1,5 @@
 from pathing_server_interface import PathingServerInterface, PathingFailed
-from tor_interface import TorInterface, TorRelay
+from tor_interface import TorInterface, TorRelayMiddle, TorRelayExit
 import argparse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -61,11 +61,11 @@ class TorClient(object):
         # TODO: stale path
         if not self.has_route:
             route = self.path_server.get_route()
-            tr1 = TorRelay(route[0])
-            tr2 = TorRelay(route[0])
-            tr3 = TorRelay(route[0])
+            tr3 = TorRelayExit(route[2])
+            tr2 = TorRelayMiddle(route[1], tr3)
+            tr1 = TorRelayMiddle(route[0], tr2)
+            tor_interface.establish_path(tr1)
             self.has_route = True
-            tor_interface.establish_path(tr1, tr2, tr3)
 
     def run_client(self):
         while True:
