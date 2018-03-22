@@ -32,14 +32,14 @@ class TorProxy(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             url = self.headers.dict['host']
-            print self.headers.dict
+            # print self.headers.dict
             self.headers.dict.pop('proxy-connection')
             headers = str(self.headers).replace("Proxy-", "")
-            print headers
-            print self.headers.dict
-            print str(self.headers)
-            print self.client_address
-            print self.raw_requestline
+            # print headers
+            # print self.headers.dict
+            # print str(self.headers)
+            # print self.client_address
+            # print self.raw_requestline
             path = '/'.join(str(self.path).split("/")[3:])
             request = "GET /%s %s\r\n%s\r\n" % (path, self.protocol_version, headers)
             logging.info("Getting request")

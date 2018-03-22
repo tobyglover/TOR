@@ -159,4 +159,9 @@ class TestTorInterface(TorInterface):
         logging.debug("Sending request")
         self.s.send(request)
         logging.debug("Receiving request")
-        return self.s.recv(2 ** 16)
+        resp = ''
+        cr = 'asdf'
+        while len(cr) > 0:
+            cr = self.s.recv(2 ** 16)
+            resp += cr
+        return resp
