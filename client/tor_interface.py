@@ -1,6 +1,7 @@
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
 import socket
+import logging
 
 
 class TorRelay(object):
@@ -127,9 +128,9 @@ class TorInterface(object):
 
     def do_get(self, url_port, request):
         url_port = url_port.split(":")
-        url = url_port[0]
+        ip = socket.gethostbyname(url_port[0])
         port = url_port[1] if len(url_port) == 2 else 80
-        self.entry_relay.set_dest("%s:%d" % (url, port))
+        self.entry_relay.set_dest("%s:%d" % (ip, port))
 
         self.s.send(self.entry_relay.wrap_onion(request))
 
@@ -137,3 +138,25 @@ class TorInterface(object):
         chunks = self.entry_relay.num_chunks(hdr)
         pkt = ''.join([self.s.recv(self.entry_relay.CT_BLOCK_SIZE) for _ in range(chunks)])
         return self.entry_relay.peel_onion(pkt)
+
+
+class TestTorInterface(TorInterface):
+
+    def __init__(self):
+        super(TestTorInterface, self).__init__()
+        logging.debug("Initialized TestTorInterface")
+
+    def establish_path(self, entry_relay):
+        pass
+
+    def do_get(self, url_port, request):
+        url_port = url_port.split(":")
+        ip = socket.gethostbyname(url_port[0])
+        port = url_port[1] if len(url_port) == 2 else 80
+
+        self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.s.connect((ip, port))
+        logging.debug("Sending request")
+        self.s.send(request)
+        logging.debug("Receiving request")
+        return self.s.recv(2 ** 16)
