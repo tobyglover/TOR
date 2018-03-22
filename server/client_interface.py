@@ -64,9 +64,10 @@ class TORPathingServer(object):
     Gets a new TOR route from the pathing server.
 
     returns: a list of the routers to pass through. Each router is represented
-        as a 3-tuple containing ip address (str), port (int), and the router's
-        public key (Crypto.PublicKey.RSA instance). No assumptions should be
-        made about the length of the route (although it is currently 3 or less)
+        as a 3-tuple containing in order the ip address (str), port (int), and
+        the router's public key (Crypto.PublicKey.RSA instance). No assumptions
+        should be made about the length of the route (although it is currently 3
+        or less)
     """
     def get_route(self):
         conn = self._newconnection()
