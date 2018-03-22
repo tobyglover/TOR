@@ -60,7 +60,7 @@ class TorInterface(object):
 
         return dat
 
-    def do_get(self, url):
+    def do_get(self, url, request):
         dest_ip = socket.gethostbyname(url)
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect((self.tr1.ip, self.tr1.port))
