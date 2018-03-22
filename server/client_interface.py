@@ -36,16 +36,38 @@ class TORPathingServer(object):
         (ip, port, pub_key) = struct.unpack("!4sI%ds" % DER_KEY_SIZE, data)
         return (socket.inet_ntoa(ip), port, RSA.import_key(pub_key))
 
+    """
+    Registers a new TOR router with the pathing server
+
+    args:
+        port (int): port that the router is listening on
+        publicKey (Crypto.PublicKey.RSA instance): public key for the router
+
+    returns: None
+    """
     def register(self, port, publicKey):
         conn = self._newconnection()
         self._send(conn, struct.pack("!cI%ds" % DER_KEY_SIZE, chr(1), port, publicKey.exportKey(format='DER')))
         conn.close()
 
+    """
+    Unregisters a TOR router from the pathing server
+
+    returns: None
+    """
     def unregister(self):
         conn = self._newconnection()
         self._send(conn, struct.pack("!c", chr(2)))
         conn.close()
 
+    """
+    Gets a new TOR route from the pathing server.
+
+    returns: a list of the routers to pass through. Each router is represented
+        as a 3-tuple containing ip address (str), port (int), and the router's
+        public key (Crypto.PublicKey.RSA instance). No assumptions should be
+        made about the length of the route (although it is currently 3 or less)
+    """
     def get_route(self):
         conn = self._newconnection()
         self._send(conn, struct.pack("!c", chr(3)))

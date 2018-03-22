@@ -1,7 +1,3 @@
-# Simple server to store and distribute active TOR routers on the
-# network. Does not persist data, meaning that the list of active routers is
-# lost on restart. Is also relatively unfriendly in a threaded environemnt.
-
 from random import shuffle
 import struct
 import sys
@@ -12,6 +8,14 @@ MAX_PATH_LENGTH = 3
 DER_KEY_SIZE = 294
 tor_routers = {}
 
+
+"""
+Simple server to store and distribute active TOR routers on the
+network. Does not persist data, meaning that the list of active routers is
+lost on restart. Is also relatively unfriendly in a threaded environment.
+
+To run: python main.py [port_num]
+"""
 class TCPHandler(SocketServer.BaseRequestHandler):
     def _register_router(self, request):
         (_, port, pub_key) = struct.unpack("!cI%ds" % DER_KEY_SIZE, request)
