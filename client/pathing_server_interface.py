@@ -2,6 +2,10 @@
 from Crypto.PublicKey import RSA
 
 
+class PathingFailed(Exception):
+    pass
+
+
 class PathingServerInterface(object):
 
     def __init__(self, ip, port):
@@ -11,7 +15,6 @@ class PathingServerInterface(object):
             ip (str): IP address of pathing server
             port (str): Port number of pathing server
         """
-        pass
 
     def get_route(self):
         """get_route

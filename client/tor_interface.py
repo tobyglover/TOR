@@ -8,7 +8,7 @@ class TorRelay(object):
 
     BLOCK_SIZE = 128
 
-    def __init__(self, ip, port, pubkey):
+    def __init__(self, (ip, port, pubkey)):
         self.ip = ip
         self.port = port
         self.ipp = "%s:%s" % (ip, port)
