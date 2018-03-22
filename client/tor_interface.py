@@ -29,6 +29,9 @@ class TorRelay(object):
     def encrypt_segs(self, segs):
         return ''.join(map(self.own_encryptor.encrypt, segs))
 
+    def decrypt_segs(self, segs):
+        return ''.join(map(self.own_encryptor.decrypt, segs))
+
 
 class TorRelayMiddle(TorRelay):
 
@@ -68,7 +71,9 @@ class TorRelayMiddle(TorRelay):
         return int(self.own_encryptor.decrypt(header))
 
     def peel_onion(self, ct):
-        pass
+        ct_segs = self.segment_ct(ct)
+        pt = self.decrypt_segs(ct_segs)
+        return self.next_relay.peel_onion(pt)
 
 
 class TorRelayExit(TorRelay):
@@ -99,6 +104,10 @@ class TorRelayExit(TorRelay):
         pkt = [str(len(pt_segs) + 1), self.next_ipp] + pt_segs
         return self.encrypt_segs(pkt)
 
+    def peel_onion(self, ct):
+        ct_segs = self.segment_ct(ct)
+        return self.decrypt_segs(ct_segs)
+
 
 class TorInterface(object):
     CHUNK_LEN = 256
@@ -124,6 +133,7 @@ class TorInterface(object):
 
         self.s.send(self.entry_relay.wrap_onion(request))
 
-
-
-
+        hdr = self.s.recv(self.entry_relay.CT_BLOCK_SIZE)
+        chunks = self.entry_relay.num_chunks(hdr)
+        pkt = ''.join([self.s.recv(self.entry_relay.CT_BLOCK_SIZE) for _ in range(chunks)])
+        return self.entry_relay.peel_onion(pkt)
