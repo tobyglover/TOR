@@ -2,7 +2,8 @@ from pathing_server_interface import PathingServerInterface, PathingFailed
 from tor_interface import TorInterface, TorRelayMiddle, TorRelayExit, TestTorInterface
 import argparse
 import logging
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
+# from http.server import HTTPServer
 import sys
 
 root = logging.getLogger()
