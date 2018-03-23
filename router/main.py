@@ -30,6 +30,8 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
         self.num_chunks = 0
         self.next_hop = None
         self.exit = False
+        self.tor_key = None
+        self.client_key = None
     def handle(self):
         # set up socket to send to next router
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -40,9 +42,16 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
         read_payload(self)
         send_payload(self, self.data)
 
+        # if exit:
+        #   read http response until less than 256 bytes read
+        #   count number of chunks
+        # if not exit: decrypt num_chunks
+        # encrypt num_chunks with tor_key
+        # encrypt remaining chunks with client_key
+        # send to self.request
 
-        # just send back the same data, but upper-cased
-#        self.request.sendall(self.data.upper())
+        # Example:
+        # self.request.sendall(self.data.upper())
     
     def read_circuit_establishment(self):
         self.data = self.request.recv(CT_BLOCK_SIZE)
@@ -67,6 +76,7 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
             num_chunks -= 1
             self.data += self.request.recv(CT_BLOCK_SIZE)
         self.data = decrypt(self.data)
+
     def make_next_hop(self, next_hop, data):
         if self.exit == True:
             return
@@ -74,6 +84,7 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
         host, port = next_hop.split(":")
         self.sock.connect((host, port))
         self.sock.sendall(data)
+
     def read_payload(self):
         self.data = self.request.recv(CT_BLOCK_SIZE)
         self.num_chunks = decrypt(self.data)
@@ -85,8 +96,10 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
             num_chunks -= 1
             self.data += self.request.recv(CT_BLOCK_SIZE)
         self.data = decrypt(self.data)
+
     def send_payload(self, data):
         self.sock.sendall(data)
+
     def read_http_req(self):
         self.data = self.request.recv(CT_BLOCK_SIZE)
         self.next_hop = decrypt(self.data)
