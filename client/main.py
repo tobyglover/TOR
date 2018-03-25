@@ -1,10 +1,10 @@
-from pathing_server_interface import PathingServerInterface, PathingFailed
+# from pathing_server_interface import PathingServerInterface, PathingFailed
 from tor_interface import TorInterface, TorRelayMiddle, TorRelayExit, TestTorInterface
 import argparse
 import logging
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
-# from http.server import HTTPServer
 import sys
+from TORPathingServer import TORPathingServer, PathingFailed
 
 root = logging.getLogger()
 root.setLevel(logging.DEBUG)
@@ -76,7 +76,7 @@ class TorClient(object):
 
     def __init__(self, port, p_ip, p_port, testti):
         global tor_interface
-        self.path_server = PathingServerInterface(p_ip, p_port)
+        self.path_server = TORPathingServer(p_ip, p_port)
         tor_interface = TestTorInterface() if testti else TorInterface()
         self.has_route = False
         logging.info("Initializing TorProxy server")

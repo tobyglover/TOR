@@ -5,6 +5,10 @@ from Crypto.PublicKey import RSA
 DER_KEY_SIZE = 294
 ROUTE_INFO_SIZE = DER_KEY_SIZE + 8
 
+
+class PathingFailed(Exception):
+    pass
+
 """
 TORPathingServer
 

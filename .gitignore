@@ -103,3 +103,4 @@ ENV/
 # misc
 .idea
 *.pem
+.DS_store
