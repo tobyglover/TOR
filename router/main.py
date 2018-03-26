@@ -12,7 +12,7 @@ import SocketServer
 import argparse
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
-from server.client_interface import TORPathingServer
+from TORPathingServer import TORPathingServer
 
 
 def parse_args():
