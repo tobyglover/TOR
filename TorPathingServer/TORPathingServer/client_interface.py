@@ -34,6 +34,9 @@ class Connection(object):
         self.send(MSG_TYPES.CLOSE)
         self._socket.close()
 
+class PathingFailed(Exception):
+    pass
+
 """
 TORPathingServer
 

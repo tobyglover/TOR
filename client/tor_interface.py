@@ -1,48 +1,37 @@
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
-import struct
 import socket
+import logging
 
 
 class TorRelay(object):
 
-    BLOCK_SIZE = 128
+    PT_BLOCK_SIZE = 128
+    CT_BLOCK_SIZE = 256
 
     def __init__(self, (ip, port, pubkey)):
         self.ip = ip
         self.port = port
         self.ipp = "%s:%s" % (ip, port)
 
-        self.tr_pubkey = pubkey
-        self.tr_encryptor = PKCS1_OAEP.new(self.tr_pubkey)
-        self.own_key = RSA.generate(2048)
-        self.own_encryptor = PKCS1_OAEP.new(self.own_key)
+        self.own_pubkey = pubkey
+        self.own_encryptor = PKCS1_OAEP.new(self.own_pubkey)
+        self.client_key = RSA.generate(2048)
+        self.client_encryptor = PKCS1_OAEP.new(self.client_key)
+        self.last_pubkey = self.client_key.publickey()
+        self.last_encryptor = PKCS1_OAEP.new(self.last_pubkey)
 
-    def segment(self, data):
-        return [data[i:i + self.BLOCK_SIZE] for i in range(0, len(data), self.BLOCK_SIZE)]
+    def segment_pt(self, data):
+        return [data[i:i + self.PT_BLOCK_SIZE] for i in range(0, len(data), self.PT_BLOCK_SIZE)]
+
+    def segment_ct(self, data):
+        return [data[i:i + self.CT_BLOCK_SIZE] for i in range(0, len(data), self.CT_BLOCK_SIZE)]
 
     def encrypt_segs(self, segs):
-        return map(self.tr_encryptor.encrypt, segs)
+        return ''.join(map(self.own_encryptor.encrypt, segs))
 
-
-
-    def build_onion(self, data):
-        if not self.next_relay:
-
-
-        body = next_ipp + return_pubkey.exportKey() + data
-        header_segs =
-        body = struct.pack("!H%ds" % len(body), len(body) / self.BLOCK_SIZE, body)
-
-        # segment data
-        data_segs = [data[i:i + self.BLOCK_SIZE] for i in range(0, len(data), self.BLOCK_SIZE)]
-
-        # encrypt data
-        return [self.encryptor.encrypt(seg) for seg in data_segs]
-
-    def peel_onion(self, ct):
-        pass
-
+    def decrypt_segs(self, segs):
+        return ''.join(map(self.own_encryptor.decrypt, segs))
 
 
 class TorRelayMiddle(TorRelay):
@@ -55,17 +44,37 @@ class TorRelayMiddle(TorRelay):
     def set_dest(self, ipp):
         self.next_relay.set_dest(ipp)
 
-    def establish_circuit(self):
-        payload = self.next_relay.establish_circuit()
-        payload_segs = self.segment(payload)
+    def establish_circuit(self, last_pubkey=None):
+        payload = self.next_relay.establish_circuit(self.own_pubkey)
+        payload_segs = self.segment_pt(payload)
 
-        ownkey = self.own_key.publickey().exportKey()
-        ownkey_segs = self.segment(ownkey)
+        if last_pubkey:
+            self.last_pubkey = last_pubkey
+            self.last_encryptor = PKCS1_OAEP.new(last_pubkey)
+        okey = self.own_pubkey.exportKey()
+        okey_segs = self.segment_pt(okey)
 
-        pkt = [str(len(payload_segs) + len(ownkey_segs) + 1), self.next_ipp]
-        pkt = pkt.append(ownkey_segs)
-        pkt = pkt.append(payload_segs)
+        ckey = self.client_key.publickey().exportKey()
+        ckey_segs = self.segment_pt(ckey)
+
+        num_chunks = len(payload_segs) + len(okey_segs) + len(ckey_segs) + 1
+        pkt = [str(num_chunks), self.next_ipp] + okey_segs + ckey_segs + payload_segs
         return self.encrypt_segs(pkt)
+
+    def wrap_onion(self, pt):
+        payload = self.next_relay.wrap_onion(pt)
+        payload_segs = self.segment_pt(payload)
+
+        pkt = [str(len(payload_segs))] + payload_segs
+        return self.encrypt_segs(pkt)
+
+    def num_chunks(self, header):
+        return int(self.own_encryptor.decrypt(header))
+
+    def peel_onion(self, ct):
+        ct_segs = self.segment_ct(ct)
+        pt = self.decrypt_segs(ct_segs)
+        return self.next_relay.peel_onion(pt)
 
 
 class TorRelayExit(TorRelay):
@@ -77,13 +86,28 @@ class TorRelayExit(TorRelay):
     def set_dest(self, ipp):
         self.next_ipp = ipp
 
-    def establish_circuit(self):
-        ownkey = self.own_key.publickey().exportKey()
-        ownkey_segs = self.segment(ownkey)
+    def establish_circuit(self, last_pubkey):
+        self.last_pubkey = last_pubkey
+        self.last_encryptor = PKCS1_OAEP.new(last_pubkey)
+        okey = self.own_pubkey.exportKey()
+        okey_segs = self.segment_pt(okey)
 
-        pkt = [str(len(ownkey_segs) + 1), self.next_ipp]
-        pkt = pkt.append(ownkey_segs)
+        ckey = self.client_key.publickey().exportKey()
+        ckey_segs = self.segment_pt(ckey)
+
+        num_chunks = len(okey_segs) + len(ckey_segs) + 1
+        pkt = [str(num_chunks), self.next_ipp] + okey_segs + ckey_segs
         return self.encrypt_segs(pkt)
+
+    def wrap_onion(self, pt):
+        pt_segs = self.segment_pt(pt)
+
+        pkt = [str(len(pt_segs) + 1), self.next_ipp] + pt_segs
+        return self.encrypt_segs(pkt)
+
+    def peel_onion(self, ct):
+        ct_segs = self.segment_ct(ct)
+        return self.decrypt_segs(ct_segs)
 
 
 class TorInterface(object):
@@ -104,44 +128,40 @@ class TorInterface(object):
 
     def do_get(self, url_port, request):
         url_port = url_port.split(":")
-        url = url_port[0]
+        ip = socket.gethostbyname(url_port[0])
         port = url_port[1] if len(url_port) == 2 else 80
-        self.entry_relay.set_dest("%s:%d" % (url, port))
+        self.entry_relay.set_dest("%s:%d" % (ip, port))
+
+        self.s.send(self.entry_relay.wrap_onion(request))
+
+        hdr = self.s.recv(self.entry_relay.CT_BLOCK_SIZE)
+        chunks = self.entry_relay.num_chunks(hdr)
+        pkt = ''.join([self.s.recv(self.entry_relay.CT_BLOCK_SIZE) for _ in range(chunks)])
+        return self.entry_relay.peel_onion(pkt)
 
 
+class TestTorInterface(TorInterface):
 
+    def __init__(self):
+        super(TestTorInterface, self).__init__()
+        logging.debug("Initialized TestTorInterface")
 
-    def make_header(self, url):
-        return "GET %s HTTP/1.1\nHost: %s\n\n" % (url, url.split("/")[2])
-
-    def construct_onion(self, data, dest_ip):
-        onion1 = self.tr1.encrypt(self.tr2.ipp, self.key.publickey(), "")
-        onion2 = self.tr2.encrypt(self.tr3.ipp, self.key.publickey(), onion1)
-        return self.tr3.encrypt(dest_ip, self.key.publickey(), onion2)
-
-    def peel_onion(self, sock):
-        # get first packet
-        pkt = sock.recv(self.CHUNK_LEN)
-        num_pkts, dat = struct.unpack("!Hd%ds" % self.CHUNK_LEN, self.decryptor.decrypt(pkt))
-
-        num_pkts -= 1
-        for i in range(0, num_pkts - 1):
-            dat += self.decryptor.decrypt(sock.recv(self.CHUNK_LEN))
-
-        return dat
+    def establish_path(self, entry_relay):
+        pass
 
     def do_get(self, url_port, request):
+        url_port = url_port.split(":")
+        ip = socket.gethostbyname(url_port[0])
+        port = url_port[1] if len(url_port) == 2 else 80
 
-        dest_ip = socket.gethostbyname(url)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect((self.tr1.ip, self.tr1.port))
-
-        onion = self.construct_onion(self.make_header(url), dest_ip)
-
-        # send request
-        sock.send(onion)
-
-        return self.peel_onion(sock)
-
-
-
+        self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.s.connect((ip, port))
+        logging.debug("Sending request")
+        self.s.send(request)
+        logging.debug("Receiving request")
+        resp = ''
+        cr = 'asdf'
+        while len(cr) > 0:
+            cr = self.s.recv(2 ** 16)
+            resp += cr
+        return resp
