@@ -2,16 +2,19 @@ from client_interface import TORPathingServer
 from Crypto.PublicKey import RSA
 import sys
 
+
 def test():
-    key = RSA.generate(2048).publickey()
+    key = RSA.generate(2048)
+
     server = TORPathingServer("localhost", int(sys.argv[1]))
-    server.register(2100, key)
+    server.register(2100, key.publickey())
     route = server.get_route()
-    
-    print route[0][2] == key
+
+    print route[0][2] == key.publickey()
     print route
     server.unregister()
     print server.get_route()
+
 
 if __name__ == '__main__':
     test()
