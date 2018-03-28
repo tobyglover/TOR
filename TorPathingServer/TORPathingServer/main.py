@@ -4,8 +4,8 @@ import struct
 import sys
 import socket
 from SocketServer import TCPServer, BaseRequestHandler
-sys.path.append('../../shared')
-from Crypt import Crypt
+sys.path.append('../../Crypt')
+from Crypt.Crypt import Crypt
 
 MAX_PATH_LENGTH = 3
 

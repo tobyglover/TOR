@@ -1,7 +1,6 @@
-from Crypto.PublicKey import RSA
 import sys
-sys.path.append('../../shared')
-from Crypt import Crypt
+sys.path.append('../../Crypt')
+from Crypt.Crypt import Crypt
 
 DER_KEY_SIZE = len(Crypt().generate_key().publickey().exportKey(format='DER'))
 
