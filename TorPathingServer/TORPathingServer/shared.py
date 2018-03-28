@@ -1,9 +1,9 @@
 from Crypto.PublicKey import RSA
 import sys
 sys.path.append('../../shared')
-from Crypt import KEY_SIZE
+from Crypt import Crypt
 
-DER_KEY_SIZE = len(RSA.generate(KEY_SIZE).publickey().exportKey(format='DER'))
+DER_KEY_SIZE = len(Crypt().generate_key().publickey().exportKey(format='DER'))
 
 class MSG_TYPES(object):
     REGISTER_SERVER = chr(1)

@@ -21,7 +21,7 @@ class CustomTCPServer(TCPServer, object):
         super(CustomTCPServer, self).__init__(server_address, request_handler)
         self.timeout = 3
         self.request_queue_size = 10
-        self.private_key = RSA.generate(KEY_SIZE)
+        self.private_key = Crypt().generate_key()
         self.tor_routers = {}
         self._connections = 0
 
