@@ -55,7 +55,7 @@ class TORPathingServer(object):
     def __init__(self, server_ip, server_port):
         self._server_ip = server_ip
         self._server_port = server_port
-        self._private_key = RSA.generate(KEY_SIZE)
+        self._private_key = Crypt().generate_key()
 
     def _newconnection(self):
         return Connection(self._server_ip, self._server_port, self._private_key)
