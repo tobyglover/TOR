@@ -2,6 +2,9 @@ from shared import *
 import socket
 import struct
 from Crypto.PublicKey import RSA
+import sys
+sys.path.append('../../shared')
+from Crypt import Crypt
 
 ROUTE_INFO_SIZE = DER_KEY_SIZE + 8
 
