@@ -6,7 +6,7 @@ import sys
 def test():
     key = RSA.generate(2048)
 
-    server = TORPathingServer("localhost", int(sys.argv[1]))
+    server = TORPathingServer(sys.argv[1], int(sys.argv[2]))
     server.register(2100, key.publickey())
     route = server.get_route()
 

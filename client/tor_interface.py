@@ -51,10 +51,10 @@ class TorRelayMiddle(TorRelay):
         if last_pubkey:
             self.last_pubkey = last_pubkey
             self.last_encryptor = PKCS1_OAEP.new(last_pubkey)
-        okey = self.own_pubkey.exportKey()
+        okey = self.own_pubkey.exportKey(format='DER')
         okey_segs = self.segment_pt(okey)
 
-        ckey = self.client_key.publickey().exportKey()
+        ckey = self.client_key.publickey().exportKey(format='DER')
         ckey_segs = self.segment_pt(ckey)
 
         num_chunks = len(payload_segs) + len(okey_segs) + len(ckey_segs) + 1
@@ -89,10 +89,10 @@ class TorRelayExit(TorRelay):
     def establish_circuit(self, last_pubkey):
         self.last_pubkey = last_pubkey
         self.last_encryptor = PKCS1_OAEP.new(last_pubkey)
-        okey = self.own_pubkey.exportKey()
+        okey = self.own_pubkey.exportKey(format='DER')
         okey_segs = self.segment_pt(okey)
 
-        ckey = self.client_key.publickey().exportKey()
+        ckey = self.client_key.publickey().exportKey(format='DER')
         ckey_segs = self.segment_pt(ckey)
 
         num_chunks = len(okey_segs) + len(ckey_segs) + 1

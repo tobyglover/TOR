@@ -2,9 +2,9 @@
 
 from distutils.core import setup
 
-setup(name='TORPathingServer',
+setup(name='TorPathingServer',
       version='1.0',
-      description='Tor pathfinding TORPathingServer',
+      description='Tor pathfinding TorPathingServer',
       author='Allen, Ben, Toby',
-      packages=['TORPathingServer'],
+      packages=['TorPathingServer'],
      )

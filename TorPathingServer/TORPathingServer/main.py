@@ -4,8 +4,8 @@ import struct
 import sys
 import socket
 from SocketServer import TCPServer, BaseRequestHandler
-sys.path.append('../../Crypt')
 from Crypt.Crypt import Crypt
+from Crypto.PublicKey import RSA
 
 MAX_PATH_LENGTH = 3
 
@@ -29,6 +29,7 @@ class CustomTCPServer(TCPServer, object):
         i = self._connections
         self._connections += 1
         return i
+
 
 class TCPHandler(BaseRequestHandler):
     def _output(self, message):
@@ -91,7 +92,11 @@ class TCPHandler(BaseRequestHandler):
 
 def main():
     HOST = "localhost"
-    PORT = int(sys.argv[1])
+    try:
+        PORT = int(sys.argv[1])
+    except KeyError:
+        print "Usage: python main.py <PORT>"
+        sys.exit(1)
     server = CustomTCPServer((HOST, PORT), TCPHandler)
     print "\nRunning on port %d\n" % PORT
     server.serve_forever()

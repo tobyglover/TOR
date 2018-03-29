@@ -18,7 +18,10 @@ class Connection(object):
 
     def _handshake(self, private_key):
         self.send(private_key.publickey().exportKey(format='DER'))
-        self._crypt.setPublicKey(RSA.import_key(self.receive(DER_KEY_SIZE)))
+        k = self.receive(DER_KEY_SIZE)
+        # self._crypt.setPublicKey(RSA.import_key(self.receive(DER_KEY_SIZE)))
+        print k
+        self._crypt.setPublicKey(RSA.import_key(k))
 
     def send(self, data):
         if (self._crypt.available()):
