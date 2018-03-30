@@ -91,7 +91,7 @@ class TCPHandler(BaseRequestHandler):
 
 
 def main():
-    HOST = "localhost"
+    HOST = "0.0.0.0"
     try:
         PORT = int(sys.argv[1])
     except KeyError:
