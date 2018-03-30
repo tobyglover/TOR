@@ -119,7 +119,7 @@ if __name__ == "__main__":
     pathing_server = TORPathingServer(pip, pport)
 
     _, port = server.server_address
-    pathing_server.register(port, server.public_key)
+    pathing_server.register(port, server.key)
     try:
         server.serve_forever()
     except:

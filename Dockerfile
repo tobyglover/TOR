@@ -2,14 +2,12 @@ FROM python:2.7-alpine
 
 ARG proj
 ARG path
+ARG args
 ARG port
-ARG pip
-ARG pport
 ENV proj=${proj}
 ENV path=${path}
+ENV args=${args}
 ENV port=${port}
-ENV pip=${pip}
-ENV pport=${pport}
 
 EXPOSE $port
 
@@ -25,6 +23,6 @@ RUN python -m pip install pycryptodome
 WORKDIR /$proj
 
 #CMD python -m SimpleHTTPServer
-CMD python $path $port $pip $pport
+CMD python $path $args --port $port
 #CMD python -i
 #CMD sh
