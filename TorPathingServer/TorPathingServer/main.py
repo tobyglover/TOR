@@ -1,10 +1,11 @@
 from shared import *
 from random import shuffle
+import uuid
 import struct
 import sys
 import socket
 from SocketServer import TCPServer, BaseRequestHandler
-from Crypt.Crypt import Crypt
+from Crypt import Crypt
 from Crypto.PublicKey import RSA
 
 MAX_PATH_LENGTH = 3
@@ -25,22 +26,34 @@ class CustomTCPServer(TCPServer, object):
         self.tor_routers = {}
         self._connections = 0
 
-    def getUniqueId(self):
+    def getUniqueConnectionId(self):
         i = self._connections
         self._connections += 1
         return i
 
 
 class TCPHandler(BaseRequestHandler):
-    def _output(self, message):
+    def _output(self, message, indent=True):
+        if indent:
+            message = "--- " + message
         print "id%d: %s" % (self._id, message)
 
-    def _register_router(self, request):
-        registration = struct.unpack("!I%ds" % DER_KEY_SIZE, request)
-        self.server.tor_routers[self.client_address[0]] = registration
+    def _send(self, message):
+        self.request.sendall(self._crypt.sign_and_encrypt(message))
 
-    def _unregister_router(self):
-        self.server.tor_routers.pop(self.client_address[0], None)
+    def _register_router(self, request):
+        (port, private_key) = struct.unpack("!I%ds" % DER_KEY_SIZE, request)
+        self._output("Registering new router: %s:%d" % (self.client_address[0], port))
+        router_id = uuid.uuid4()
+        self.server.tor_routers[router_id] = (self.client_address[0], port, private_key)
+        self._send(router_id.bytes)
+
+    def _unregister_router(self, request):
+        router_id = uuid.UUID(bytes=request)
+        if router_id in self.server.tor_routers and self.server.tor_routers[router_id][0] == self.client_address[0]:
+            (ip_addr, port, _) = self.server.tor_routers.pop(router_id, None)
+            self._output("Deregistering router: %s:%d" % (ip_addr, port))
+
 
     def _create_route(self):
         route = ""
@@ -48,18 +61,17 @@ class TCPHandler(BaseRequestHandler):
         shuffle(shuffled_keys)
 
         for i in range(min(len(shuffled_keys), MAX_PATH_LENGTH)):
-            ip_addr = shuffled_keys[i]
-            (port, pub_key) = self.server.tor_routers[ip_addr]
+            (ip_addr, port, pub_key) = self.server.tor_routers[shuffled_keys[i]]
             route += socket.inet_aton(ip_addr) + struct.pack("!I%ds" % DER_KEY_SIZE, port, pub_key)
 
-        self.request.sendall(self._crypt.sign_and_encrypt(route))
+        self._send(route)
 
     def setup(self):
         self._crypt = Crypt(self.server.private_key)
-        self._id = self.server.getUniqueId()
+        self._id = self.server.getUniqueConnectionId()
 
     def handle(self):
-        self._output("Establishing connection with with %s, port %s" % self.client_address)
+        self._output("Establishing connection with with %s, port %s" % self.client_address, indent=False)
         request = self.request.recv(DER_KEY_SIZE)
         self.request.sendall(self.server.private_key.publickey().exportKey(format='DER'))
         self._crypt.setPublicKey(RSA.import_key(request))
@@ -72,21 +84,19 @@ class TCPHandler(BaseRequestHandler):
                 request = self._crypt.decrypt_and_auth(request)
                 request_type = request[0]
                 request = request[1:]
-
-                if request_type == MSG_TYPES.REGISTER_SERVER:
-                    self._output("--- Registering new router: " + self.client_address[0])
-                    self._register_router(request)
-                elif request_type == MSG_TYPES.DEREGISTER_SERVER:
-                    self._output("--- Deregistering router: " + self.client_address[0])
-                    self._unregister_router()
-                elif request_type == MSG_TYPES.GET_ROUTE:
-                    self._output("--- Creating route")
-                    self._create_route()
-                elif request_type == MSG_TYPES.CLOSE:
-                    self._output("--- Client exiting connection")
-                    return
             except:
                 self._output("ERROR: Message authentication failed")
+                return
+
+            if request_type == MSG_TYPES.REGISTER_SERVER:
+                self._register_router(request)
+            elif request_type == MSG_TYPES.DEREGISTER_SERVER:
+                self._unregister_router(request)
+            elif request_type == MSG_TYPES.GET_ROUTE:
+                self._output("Creating route")
+                self._create_route()
+            elif request_type == MSG_TYPES.CLOSE:
+                self._output("Client exiting connection")
                 return
 
 

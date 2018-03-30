@@ -2,9 +2,12 @@ from shared import *
 import socket
 import struct
 from Crypto.PublicKey import RSA
-from crypt import Crypt
+from Crypt import Crypt
 
 ROUTE_INFO_SIZE = DER_KEY_SIZE + 8
+
+class PathingFailed(Exception):
+    pass
 
 class Connection(object):
     def __init__(self, server_ip, server_port, private_key):
@@ -19,8 +22,6 @@ class Connection(object):
     def _handshake(self, private_key):
         self.send(private_key.publickey().exportKey(format='DER'))
         k = self.receive(DER_KEY_SIZE)
-        # self._crypt.setPublicKey(RSA.import_key(self.receive(DER_KEY_SIZE)))
-        print k
         self._crypt.setPublicKey(RSA.import_key(k))
 
     def send(self, data):
@@ -38,9 +39,6 @@ class Connection(object):
         self.send(MSG_TYPES.CLOSE)
         self._socket.close()
 
-class PathingFailed(Exception):
-    pass
-
 """
 TORPathingServer
 
@@ -56,7 +54,11 @@ class TORPathingServer(object):
     def __init__(self, server_ip, server_port):
         self._server_ip = server_ip
         self._server_port = server_port
+        self._router_id = None
         self._private_key = Crypt().generate_key()
+
+    def __del__(self):
+        self.unregister()
 
     def _newconnection(self):
         return Connection(self._server_ip, self._server_port, self._private_key)
@@ -75,17 +77,23 @@ class TORPathingServer(object):
     returns: None
     """
     def register(self, port, publicKey):
+        assert self._router_id is None, "Error: instance is already registered with server"
         conn = self._newconnection()
         conn.send(struct.pack("!cI%ds" % DER_KEY_SIZE, MSG_TYPES.REGISTER_SERVER, port, publicKey.exportKey(format='DER')))
+        self._router_id = conn.receive()
 
     """
-    Unregisters a TOR router from the pathing server
+    Unregisters a TOR router from the pathing server. Note that this is done automatically when the
+    object is garbage collected.
 
     returns: None
     """
     def unregister(self):
+        if self._router_id is None:
+            return
         conn = self._newconnection()
-        conn.send(struct.pack("!c", MSG_TYPES.DEREGISTER_SERVER))
+        conn.send(struct.pack("!c%ds" % len(self._router_id), MSG_TYPES.DEREGISTER_SERVER, self._router_id))
+        self._router_id = None
 
     """
     Gets a new TOR route from the pathing server.
@@ -99,12 +107,13 @@ class TORPathingServer(object):
     def get_route(self):
         conn = self._newconnection()
         conn.send(struct.pack("!c", MSG_TYPES.GET_ROUTE))
-        route_data = conn.receive(ROUTE_INFO_SIZE * 3)
+        route_data = conn.receive(2048)
 
         i = 0
         route = []
         while (i + 1) * ROUTE_INFO_SIZE <= len(route_data):
-            route.append(self._parse_route_node(route_data[i * ROUTE_INFO_SIZE:(i + 1) * ROUTE_INFO_SIZE + 1]))
+            data = route_data[i * ROUTE_INFO_SIZE:(i + 1) * ROUTE_INFO_SIZE]
+            route.append(self._parse_route_node(data))
             i += 1
 
         return route
