@@ -8,7 +8,7 @@ class TorRouterInterface(object):
     PT_BLOCK_SIZE = 128
     CT_BLOCK_SIZE = 256
 
-    def __init__(self, tor_pubkey, ip, port, next_router=None, entry=False):
+    def __init__(self, (ip, port, tor_pubkey), next_router=None, entry=False):
         self.tor_pubkey = tor_pubkey
         self.tor_crypt = Crypt(public_key=tor_pubkey)
         return_key = RSA.generate(2048)
@@ -41,7 +41,11 @@ class TorRouterInterface(object):
         else:
             return packet
 
-    def make_request(self, ip, port, request):
+    def make_request(self, url, request):
+        url_port = url.split(":")
+        ip = socket.gethostbyname(url_port[0])
+        port = url_port[1] if len(url_port) == 2 else 80
+
         if self.next_router:
             packet = self.next_router.make_request(ip, port, request)
             packet = self.tor_crypt.sign_and_encrypt(packet)
