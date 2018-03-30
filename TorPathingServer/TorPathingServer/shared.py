@@ -1,6 +1,4 @@
-import sys
-sys.path.append('../../Crypt')
-from Crypt.Crypt import Crypt
+from Crypt import Crypt
 
 DER_KEY_SIZE = len(Crypt().generate_key().publickey().exportKey(format='DER'))
 
