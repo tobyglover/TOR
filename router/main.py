@@ -8,7 +8,7 @@ import sys
 
 import struct
 import socket
-import SocketServer
+from SocketServer import TCPServer, BaseRequestHandler
 import argparse
 
 from Crypto.PublicKey import RSA
@@ -16,148 +16,104 @@ from Crypto.PublicKey import RSA
 from TorPathingServer import TORPathingServer
 from Crypt import Crypt
 
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("pip", help="IP address of Tor pathfinding server")
     parser.add_argument("pport", type=int, help="IP address of Tor pathfinding server")
+    parser.add_argument("--port", type=int, help="Port to bind to", default=0)
     args = parser.parse_args()
-    return args.pip, args.pport
+    return args.pip, args.pport, args.port
 
-class MyTCPHandler(SocketServer.BaseRequestHandler):
-    PT_BLOCK_SIZE = 128
+
+class CustomTCPServer(TCPServer, object):
+    def __init__(self, server_address, request_handler):
+        super(CustomTCPServer, self).__init__(server_address, request_handler)
+        self.key = Crypt().generate_key()
+        self.crypt = Crypt(private_key=self.key, public_key=self.key.publickey())
+
+
+class MyTCPHandler(BaseRequestHandler):
     CT_BLOCK_SIZE = 256
+    HEADER_SIZE = CT_BLOCK_SIZE * 2
+    DER_LEN = len(RSA.generate(2048).publickey().exportKey(format='DER'))
+
     def setup(self):
         print "connection received"
-        self.sock = None
-        self.data = None
-        self.num_chunks = 0
-        self.next_hop = None
+        self.next_sock = None
         self.exit = False
-        self.tor_crypt = None
         self.client_crypt = None
+        self.prev_crypt = None
+
     def handle(self):
-        print 'handling connection...'
-        # set up socket to send to next router
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
+        print 'handling connection from %s:%s' % self.client_address
         self.read_circuit_establishment()
-        self.make_next_hop(self.next_hop, self.data)
 
-        self.read_payload()
-        self.send_payload(self.data)
-        if self.exit == True:
-            payload = self.read_http_res()
-        else:
-            payload = self.read_router_res()
-        self.request.sendall(payload)
+        self.forward_payload()
+        self.forward_response()
     
     def read_circuit_establishment(self):
-        self.data = self.request.recv(self.CT_BLOCK_SIZE)
+        header = self.request.recv(self.HEADER_SIZE)
+        num_chunks, self.next_ip, self.next_port = self.server.crypt.decrypt_and_auth(header).split(":")
 
-        self.num_chunks = self.encryptor.decrypt_and_auth(self.data)
+        data = self.request.recv(self.CT_BLOCK_SIZE * int(num_chunks))
+        data = self.server.crypt.decrypt_and_auth(data)
+        prev_pubkey, client_pubkey, payload = data[:self.DER_LEN], data[self.DER_LEN: 2*self.DER_LEN], \
+                                              data[2*self.DER_LEN:]
 
-        print "---number of chunks:",
-        print self.num_chunks
+        self.prev_crypt = Crypt(public_key=RSA.importKey(prev_pubkey))
+        self.client_crypt = Crypt(public_key=RSA.importKey(client_pubkey))
 
-        self.data = self.request.recv(self.CT_BLOCK_SIZE)
-        self.next_hop = self.encryptor.decrypt_and_auth(self.data)
-        
-        if self.next_hop == "EXIT":
+        if self.next_ip == "EXIT":
             print "---I am the exit router---"
             self.exit = True
-
-        self.data = self.request.recv(self.CT_BLOCK_SIZE)
-        
-        decrypted_data = self.encryptor.decrypt_and_auth(self.data)
-        self.tor_crypt = Crypt(None, RSA.importKey(decrypted_data))
-
-        self.data = self.request.recv(self.CT_BLOCK_SIZE)
-        decrypted_data = self.encryptor.decrypt_and_auth(self.data)  
-         
-        self.client_crypt = Crypt(None, RSA.importKey(decrypted_data))
-        self.num_chunks -= 3
-        self.data = None
-
-        while (self.num_chunks > 0):
-            self.num_chunks -= 1
-            self.data += self.request.recv(self.CT_BLOCK_SIZE)
-        self.data = self.encryptor.decrypt_and_auth(self.data)
+        else:
+            self.make_next_hop((self.next_ip, self.next_port), payload)
 
     def make_next_hop(self, next_hop, data):
-        if self.exit == True:
-            return
         print "---sending establishment circuit to next router---"
-        host, port = next_hop.split(":")
-        self.sock.connect((host, port))
-        self.sock.sendall(data)
+        self.next_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.next_sock.connect(next_hop)
+        self.next_sock.sendall(data)
 
-    def read_payload(self):
-        self.data = self.request.recv(self.CT_BLOCK_SIZE)
-        self.num_chunks = self.encryptor.decrypt_and_auth(self.data)
-        if self.exit == True:
-            self.read_http_req(self)
-            return
-        self.data = None
-        while (self.num_chunks > 0):
-            self.num_chunks -= 1
-            self.data += self.request.recv(self.CT_BLOCK_SIZE)
-        self.data = self.encryptor.decrypt_and_auth(self.data)
+    def forward_payload(self):
+        header = self.request.recv(self.HEADER_SIZE)
+        header = self.server.crypt.decrypt_and_auth(header)
 
-    def send_payload(self, data):
-        if self.exit != True:
-            self.sock.sendall(data)
+        if self.exit:
+            num_chunks, ip, port = header.split(":")
+            self.next_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.next_sock.connect((ip, int(port)))
+        else:
+            num_chunks = header
 
-    def read_http_req(self):
-        self.data = self.request.recv(self.CT_BLOCK_SIZE)
-        
-        self.next_hop = self.encryptor.decrypt_and_auth(self.data)
-        host, port = self.next_hop.split(":")
+        data = self.request.recv(self.CT_BLOCK_SIZE * int(num_chunks))
+        data = self.server.crypt.decrypt_and_auth(data)
+        self.next_sock.sendall(data)
 
-        self.num_chunks -= 1
-        while (self.num_chunks > 0):
-            self.num_chunks -= 1
-            self.data += self.request.recv(self.CT_BLOCK_SIZE)
+    def forward_response(self):
+        if self.exit:
+            chunk = 'asdf'
+            payload = ''
+            while len(chunk) > 0:
+                chunk = self.next_sock.recv(1024)
+                payload += chunk
 
-        self.data = self.encryptor.decrypt_and_auth(self.data)
-        self.sock.connect((host, port))
-        self.sock.sendall(self.data)
+            payload = self.client_crypt.sign_and_encrypt(payload)
+            header = self.prev_crypt.sign_and_encrypt(str(len(payload) / self.CT_BLOCK_SIZE))
+        else:
+            header = self.next_sock.recv(self.HEADER_SIZE)
+            num_chunks = self.server.crypt.decrypt_and_auth(header)
+            payload = self.next_sock.recv(num_chunks * self.CT_BLOCK_SIZE)
+            payload = self.client_crypt.sign_and_encrypt(payload)
 
-    def read_http_res(self):
-        # INSECURE! POSSIBLE BUFFER OVERFLOW
-        nbytes = self.sock.recvfrom_into(self.data)
-        print "---read nbytes: ",
-        print nbytes
-        data_segs = self.segment_ct(self.data)
-        self.num_chunks = len(data_segs)
-
-        payload_segs = self.client_crypt.sign_and_encrypt(data_segs)
-        num_chunks_encrypted = self.tor_crypt.sign_and_encrypt(self.num_chunks)
-        return [str(num_chunks_encrypted)] + payload_segs
-        
-    def read_router_res(self):
-        self.num_chunks = self.request.recv(self.CT_BLOCK_SIZE)
-        nbytes = self.sock.recvfrom_into(self.data)
-        print "---read nbytes: ",
-        print nbytes
-        self.num_chunks = self.encryptor.decrypt_and_auth(self.num_chunks)
-        num_chunks_encrypted = self.tor_crypt.sign_and_encrypt(self.num_chunks)
-        payload_segs = self.client_crypt.sign_and_encrypt(self.data)
-        return [str(num_chunks_encrypted)] + payload_segs
-
-    def segment_pt(self, data):
-        return [data[i:i + self.PT_BLOCK_SIZE] for i in range(0, len(data), self.PT_BLOCK_SIZE)]
-    def segment_ct(self, data):
-        return [data[i:i + self.CT_BLOCK_SIZE] for i in range(0, len(data), self.CT_BLOCK_SIZE)]
+        self.request.sendall(header + payload)
 
 
 if __name__ == "__main__":
-    pip, pport= parse_args()
+    pip, pport, port= parse_args()
     # Create the server, binding to localhost on PORT
-    server = SocketServer.TCPServer(("0.0.0.0", 0), MyTCPHandler)
-
-    server.private_key = Crypt().generate_key()
-    server.public_key = server.private_key.publickey()
-    server.encryptor = Crypt(server.private_key, server.public_key)
+    server = CustomTCPServer(("0.0.0.0", port), MyTCPHandler)
 
     # Send public key and port to pathing server
     pathing_server = TORPathingServer(pip, pport)
