@@ -1,7 +1,7 @@
 import socket
 import sys
 
-HOST, PORT = "localhost", 9999
+HOST, PORT = "localhost", 8080
 data = " ".join(sys.argv[1:])
 
 # Create a socket (SOCK_STREAM means a TCP socket)
@@ -17,5 +17,5 @@ try:
 finally:
     sock.close()
 
-print "Sent:     {}".format(data)
+print "Sent:     {}".format("a"*256)
 print "Received: {}".format(received)

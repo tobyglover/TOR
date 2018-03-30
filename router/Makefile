@@ -1,10 +1,10 @@
 
 
 build:
-	docker build --build-arg proj=router --build-arg port=$(PORT) --build-arg pport=$(PPORT) --build-arg pip=$(PIP) -t router.img ..
+	docker build --build-arg proj=router --build-arg path=/router/main.py --build-arg port=$(PORT) --build-arg pport=$(PPORT) --build-arg pip=$(PIP) -t router.img ..
 
 start: build
-	-docker container start router.cont || docker run -p $(PORT):$(PORT) --net=host --privileged -v /dev/:/dev/ -t --name router.cont router.img
+	-docker container start router.cont || docker run -p $(PORT):$(PORT) --privileged --name router.cont router.img
 
 stop:
 	-docker container stop router.cont

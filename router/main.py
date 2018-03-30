@@ -11,11 +11,10 @@ import socket
 import SocketServer
 import argparse
 
-# from Crypto.PublicKey import RSA
+from Crypto.PublicKey import RSA
 # from Crypto.Cipher import PKCS1_OAEP
-sys.path.append('../')
-from TorPathingServer.TORPathingServer import client_interface
-from TorPathingServer.TORPathingServer import crypt
+from TorPathingServer import TORPathingServer
+from Crypt import Crypt
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -38,50 +37,51 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
         self.tor_crypt = None
         self.client_crypt = None
     def handle(self):
+        print 'handling connection...'
         # set up socket to send to next router
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-        read_circuit_establishment(self)
-        make_next_hop(self, self.next_hop, self.data)
+        self.read_circuit_establishment()
+        self.make_next_hop(self.next_hop, self.data)
 
-        read_payload(self)
-        send_payload(self, self.data)
+        self.read_payload()
+        self.send_payload(self.data)
         if self.exit == True:
-            payload = read_http_res()
+            payload = self.read_http_res()
         else:
-            payload = read_router_res()
+            payload = self.read_router_res()
         self.request.sendall(payload)
     
     def read_circuit_establishment(self):
-        self.data = self.request.recv(CT_BLOCK_SIZE)
+        self.data = self.request.recv(self.CT_BLOCK_SIZE)
 
         self.num_chunks = self.encryptor.decrypt_and_auth(self.data)
 
         print "---number of chunks:",
-        print num_chunks
+        print self.num_chunks
 
-        self.data = self.request.recv(CT_BLOCK_SIZE)
+        self.data = self.request.recv(self.CT_BLOCK_SIZE)
         self.next_hop = self.encryptor.decrypt_and_auth(self.data)
         
         if self.next_hop == "EXIT":
             print "---I am the exit router---"
             self.exit = True
 
-        self.data = self.request.recv(CT_BLOCK_SIZE)
+        self.data = self.request.recv(self.CT_BLOCK_SIZE)
         
         decrypted_data = self.encryptor.decrypt_and_auth(self.data)
         self.tor_crypt = Crypt(None, RSA.importKey(decrypted_data))
 
-        self.data = self.request.recv(CT_BLOCK_SIZE)
+        self.data = self.request.recv(self.CT_BLOCK_SIZE)
         decrypted_data = self.encryptor.decrypt_and_auth(self.data)  
          
         self.client_crypt = Crypt(None, RSA.importKey(decrypted_data))
-        num_chunks -= 3
+        self.num_chunks -= 3
         self.data = None
 
-        while (num_chunks > 0):
-            num_chunks -= 1
-            self.data += self.request.recv(CT_BLOCK_SIZE) 
+        while (self.num_chunks > 0):
+            self.num_chunks -= 1
+            self.data += self.request.recv(self.CT_BLOCK_SIZE)
         self.data = self.encryptor.decrypt_and_auth(self.data)
 
     def make_next_hop(self, next_hop, data):
@@ -93,10 +93,10 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
         self.sock.sendall(data)
 
     def read_payload(self):
-        self.data = self.request.recv(CT_BLOCK_SIZE)
+        self.data = self.request.recv(self.CT_BLOCK_SIZE)
         self.num_chunks = self.encryptor.decrypt_and_auth(self.data)
         if self.exit == True:
-            read_http_req(self)
+            self.read_http_req(self)
             return
         self.data = None
         while (self.num_chunks > 0):
@@ -152,18 +152,21 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
 
 
 if __name__ == "__main__":
-    HOST = "localhost"
+    HOST = "0.0.0.0"
     port, pip, pport= parse_args()
     # Create the server, binding to localhost on PORT
     server = SocketServer.TCPServer((HOST, port), MyTCPHandler)
 
     server.private_key = Crypt().generate_key()
-    server.public_key = server.private_key.public_key()
+    server.public_key = server.private_key.publickey()
     server.encryptor = Crypt(server.private_key, server.public_key)
 
     # Send public key and port to pathing server
     pathing_server = TORPathingServer(pip, pport)
 
     pathing_server.register(port, server.public_key)
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    except:
+        print "Exiting and unregistering Tor router"
     pathing_server.unregister()
