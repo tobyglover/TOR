@@ -162,7 +162,8 @@ if __name__ == "__main__":
     # Send public key and port to pathing server
     pathing_server = TORPathingServer(pip, pport)
 
-    pathing_server.register(0, server.public_key)
+    _, port = server.server_address
+    pathing_server.register(port, server.public_key)
     try:
         server.serve_forever()
     except:
