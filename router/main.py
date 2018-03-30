@@ -35,12 +35,8 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
         self.num_chunks = 0
         self.next_hop = None
         self.exit = False
-        self.tor_key = None
-        self.tor_encryptor = None
         self.tor_crypt = None
         self.client_crypt = None
-        self.client_key = None
-        self.client_encryptor = None
     def handle(self):
         # set up socket to send to next router
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -64,9 +60,7 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
         print "---number of chunks:",
         print num_chunks
 
-        # Ugly code for now, will fix to read all at once
         self.data = self.request.recv(CT_BLOCK_SIZE)
-
         self.next_hop = self.encryptor.decrypt_and_auth(self.data)
         
         if self.next_hop == "EXIT":
@@ -75,16 +69,16 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
 
         self.data = self.request.recv(CT_BLOCK_SIZE)
         
-        self.tor_key = self.encryptor.decrypt_and_auth(self.data)
-
-        self.tor_crypt = Crypt(None, RSA.importKey(self.tor_key))
+        decrypted_data = self.encryptor.decrypt_and_auth(self.data)
+        self.tor_crypt = Crypt(None, RSA.importKey(decrypted_data))
 
         self.data = self.request.recv(CT_BLOCK_SIZE)
-        self.client_key = self.encryptor.decrypt_and_auth(self.data)  
+        decrypted_data = self.encryptor.decrypt_and_auth(self.data)  
          
-        self.client_crypt = Crypt(None, RSA.importKey(self.client_key))
+        self.client_crypt = Crypt(None, RSA.importKey(decrypted_data))
         num_chunks -= 3
         self.data = None
+
         while (num_chunks > 0):
             num_chunks -= 1
             self.data += self.request.recv(CT_BLOCK_SIZE) 
@@ -105,37 +99,47 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
             read_http_req(self)
             return
         self.data = None
-        while (num_chunks > 0):
-            num_chunks -= 1
+        while (self.num_chunks > 0):
+            self.num_chunks -= 1
             self.data += self.request.recv(CT_BLOCK_SIZE)
         self.data = self.encryptor.decrypt_and_auth(self.data)
 
     def send_payload(self, data):
-        self.sock.sendall(data)
+        if self.exit != True:
+            self.sock.sendall(data)
 
     def read_http_req(self):
         self.data = self.request.recv(CT_BLOCK_SIZE)
         
         self.next_hop = self.encryptor.decrypt_and_auth(self.data)
-        
-        # actual http get request
-        self.data = self.request.recv(CT_BLOCK_SIZE)
-        
+        host, port = next_hop.split(":")
+
+        self.num_chunks -= 1
+        while (self.num_chunks > 0):
+            self.num_chunks -= 1
+            self.data += self.request.recv(CT_BLOCK_SIZE)
+
         self.data = self.encryptor.decrypt_and_auth(self.data)
+        self.sock.connect((host, port))
+        self.sock.sendall(data)
+
     def read_http_res(self):
         # INSECURE! POSSIBLE BUFFER OVERFLOW
         nbytes = self.sock.recvfrom_into(self.data)
+        print "---read nbytes: ",
+        print nbytes
         data_segs = self.segment_ct(self.data)
         self.num_chunks = len(data_segs)
 
         payload_segs = self.client_crypt.sign_and_encrypt(data_segs)
         num_chunks_encrypted = self.tor_crypt.sign_and_encrypt(self.num_chunks)
-
         return [str(num_chunks_encrypted)] + payload_segs
+        
     def read_router_res(self):
         self.num_chunks = self.request.recv(CT_BLOCK_SIZE)
         nbytes = self.sock.recvfrom_into(self.data)
-
+        print "---read nbytes: ",
+        print nbytes
         self.num_chunks = self.encryptor.decrypt_and_auth(self.num_chunks)
         num_chunks_encrypted = self.tor_crypt.sign_and_encrypt(self.num_chunks)
         payload_segs = self.client_crypt.sign_and_encrypt(self.data)
