@@ -1,5 +1,5 @@
 #!/bin/bash
 
-python -m pip install --user pycryptodome
-python -m pip install --user Crypt/
-python -m pip install --user TorPathingServer/
+python -m pip install --upgrade pycryptodome
+python -m pip install --upgrade Crypt/
+python -m pip install --upgrade TorPathingServer/
