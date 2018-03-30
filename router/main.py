@@ -18,11 +18,10 @@ from Crypt import Crypt
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('port', help="Port number to listen on Tor router", type=int)
     parser.add_argument("pip", help="IP address of Tor pathfinding server")
     parser.add_argument("pport", type=int, help="IP address of Tor pathfinding server")
     args = parser.parse_args()
-    return args.port, args.pip, args.pport
+    return args.pip, args.pport
 
 class MyTCPHandler(SocketServer.BaseRequestHandler):
     PT_BLOCK_SIZE = 128
@@ -101,7 +100,7 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
         self.data = None
         while (self.num_chunks > 0):
             self.num_chunks -= 1
-            self.data += self.request.recv(CT_BLOCK_SIZE)
+            self.data += self.request.recv(self.CT_BLOCK_SIZE)
         self.data = self.encryptor.decrypt_and_auth(self.data)
 
     def send_payload(self, data):
@@ -109,19 +108,19 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
             self.sock.sendall(data)
 
     def read_http_req(self):
-        self.data = self.request.recv(CT_BLOCK_SIZE)
+        self.data = self.request.recv(self.CT_BLOCK_SIZE)
         
         self.next_hop = self.encryptor.decrypt_and_auth(self.data)
-        host, port = next_hop.split(":")
+        host, port = self.next_hop.split(":")
 
         self.num_chunks -= 1
         while (self.num_chunks > 0):
             self.num_chunks -= 1
-            self.data += self.request.recv(CT_BLOCK_SIZE)
+            self.data += self.request.recv(self.CT_BLOCK_SIZE)
 
         self.data = self.encryptor.decrypt_and_auth(self.data)
         self.sock.connect((host, port))
-        self.sock.sendall(data)
+        self.sock.sendall(self.data)
 
     def read_http_res(self):
         # INSECURE! POSSIBLE BUFFER OVERFLOW
@@ -136,7 +135,7 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
         return [str(num_chunks_encrypted)] + payload_segs
         
     def read_router_res(self):
-        self.num_chunks = self.request.recv(CT_BLOCK_SIZE)
+        self.num_chunks = self.request.recv(self.CT_BLOCK_SIZE)
         nbytes = self.sock.recvfrom_into(self.data)
         print "---read nbytes: ",
         print nbytes
@@ -152,10 +151,9 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
 
 
 if __name__ == "__main__":
-    HOST = "0.0.0.0"
-    port, pip, pport= parse_args()
+    pip, pport= parse_args()
     # Create the server, binding to localhost on PORT
-    server = SocketServer.TCPServer((HOST, port), MyTCPHandler)
+    server = SocketServer.TCPServer(("0.0.0.0", 0), MyTCPHandler)
 
     server.private_key = Crypt().generate_key()
     server.public_key = server.private_key.publickey()
@@ -164,7 +162,7 @@ if __name__ == "__main__":
     # Send public key and port to pathing server
     pathing_server = TORPathingServer(pip, pport)
 
-    pathing_server.register(port, server.public_key)
+    pathing_server.register(0, server.public_key)
     try:
         server.serve_forever()
     except:
