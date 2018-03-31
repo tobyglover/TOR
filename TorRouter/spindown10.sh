@@ -6,7 +6,7 @@
 #    docker exec router${i}.cont kill -s SIGINT ${PID}
 #done
 
-for i in `seq 0 9`;
+for i in `seq 0 ${1}`;
 do
     make clean CONT=${i}
 done

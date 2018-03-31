@@ -9,12 +9,13 @@ class TorRouterInterface(object):
     CT_BLOCK_SIZE = 256
 
     def __init__(self, (ip, port, tor_pubkey), next_router=None, entry=False):
-        self.tor_pubkey = tor_pubkey
-        self.tor_crypt = Crypt(public_key=tor_pubkey)
         return_key = RSA.generate(2048)
         self.return_pubkey = return_key.publickey().exportKey(format='DER')
         self.return_crypt = Crypt(public_key=return_key.publickey(),
                                   private_key=return_key)
+        self.tor_pubkey = tor_pubkey
+        self.tor_crypt = Crypt(public_key=tor_pubkey,
+                               private_key=return_key)
         self.next_router = next_router
         self.entry = entry
         self.ip = ip
@@ -22,7 +23,7 @@ class TorRouterInterface(object):
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     def establish_circuit(self):
-        packet = self.tor_pubkey + self.return_pubkey
+        packet = self.tor_pubkey.exportKey(format='DER') + self.return_pubkey
 
         if self.next_router:
             packet += self.next_router.establish_circuit()

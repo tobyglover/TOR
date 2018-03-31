@@ -61,8 +61,10 @@ class MyTCPHandler(BaseRequestHandler):
         prev_pubkey, client_pubkey, payload = data[:self.DER_LEN], data[self.DER_LEN: 2*self.DER_LEN], \
                                               data[2*self.DER_LEN:]
 
-        self.prev_crypt = Crypt(public_key=RSA.importKey(prev_pubkey))
-        self.client_crypt = Crypt(public_key=RSA.importKey(client_pubkey))
+        self.prev_crypt = Crypt(public_key=RSA.importKey(prev_pubkey),
+                                private_key=self.server.key)
+        self.client_crypt = Crypt(public_key=RSA.importKey(client_pubkey),
+                                  private_key=self.server.key)
 
         if self.next_ip == "EXIT":
             print "---I am the exit router---"
@@ -119,7 +121,7 @@ if __name__ == "__main__":
     pathing_server = TORPathingServer(pip, pport)
 
     _, port = server.server_address
-    pathing_server.register(port, server.key)
+    pathing_server.register(port, server.key.publickey())
     try:
         server.serve_forever()
     except:
