@@ -48,7 +48,7 @@ class TorRouterInterface(object):
         port = url_port[1] if len(url_port) == 2 else 80
 
         if self.next_router:
-            packet = self.next_router.make_request(ip, port, request)
+            packet = self.next_router.make_request(url, request)
             packet = self.tor_crypt.sign_and_encrypt(packet)
             header = str(len(packet) / self.CT_BLOCK_SIZE)
             packet = self.tor_crypt.sign_and_encrypt(header) + packet
