@@ -1,21 +1,31 @@
 import socket
 import sys
+from TorRouter import TorRouterInterface
+from TorPathingServer import TORPathingServer
+import argparse
+import logging
 
-HOST, PORT = "localhost", 8080
-data = " ".join(sys.argv[1:])
+root = logging.getLogger()
+root.setLevel(logging.DEBUG)
 
-# Create a socket (SOCK_STREAM means a TCP socket)
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+ch = logging.StreamHandler(sys.stdout)
+ch.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+root.addHandler(ch)
 
-try:
-    # Connect to server and send data
-    sock.connect((HOST, PORT))
-    sock.sendall(data + "\n")
+parser = argparse.ArgumentParser()
+parser.add_argument("--pip", default="localhost")
+parser.add_argument("--pport", type=int, default=8000)
+args = parser.parse_args()
+pip, pport = args.pip, args.pport
 
-    # Receive data from the server and shut down
-    received = sock.recv(1024)
-finally:
-    sock.close()
+logging.info("Getting path")
+tps = TORPathingServer(pip, pport)
+address = tps.get_route()[0]
 
-print "Sent:     {}".format("a"*256)
-print "Received: {}".format(received)
+logging.info("Creating TorRouterInterface")
+tr = TorRouterInterface(address, entry=True)
+
+logging.info("Establishing circuit")
+tr.establish_circuit()

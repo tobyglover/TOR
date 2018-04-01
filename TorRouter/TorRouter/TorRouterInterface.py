@@ -1,5 +1,6 @@
 from Crypt import Crypt
 from Crypto.PublicKey import RSA
+import logging
 import socket
 
 
@@ -9,37 +10,48 @@ class TorRouterInterface(object):
     CT_BLOCK_SIZE = 256
 
     def __init__(self, (ip, port, tor_pubkey), next_router=None, entry=False):
-        return_key = RSA.generate(2048)
-        self.return_pubkey = return_key.publickey().exportKey(format='DER')
-        self.return_crypt = Crypt(public_key=return_key.publickey(),
-                                  private_key=return_key)
+        client_key = Crypt().generate_key()
+        self.client_pubkey = client_key.publickey()
         self.tor_pubkey = tor_pubkey
         self.tor_crypt = Crypt(public_key=tor_pubkey,
-                               private_key=return_key)
+                               private_key=client_key)
+        self.prev_pubkey_der = None
         self.next_router = next_router
         self.entry = entry
         self.ip = ip
         self.port = port
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        logging.info("Initialized TorRouterInterface")
 
-    def establish_circuit(self):
-        packet = self.tor_pubkey.exportKey(format='DER') + self.return_pubkey
+    def establish_circuit(self, prev_pubkey=None):
+        packet = self.client_pubkey.exportKey(format='DER')
+
+        if self.entry:
+            self.prev_pubkey_der = self.client_pubkey.exportKey(format='DER')
+        else:
+            self.prev_pubkey_der = prev_pubkey
 
         if self.next_router:
-            packet += self.next_router.establish_circuit()
+            packet += self.next_router.tor_pubkey.exportKey(format='DER')
+            packet += self.next_router.establish_circuit(self.tor_pubkey)
             packet = self.tor_crypt.sign_and_encrypt(packet)
             header = "%d:%s:%d" % (len(packet) / self.CT_BLOCK_SIZE,
                                    self.next_router.ip, self.next_router.port)
-            packet = self.tor_crypt.sign_and_encrypt(header) + packet
+            header = self.tor_crypt.sign_and_encrypt(header)
         else:
             packet = self.tor_crypt.sign_and_encrypt(packet)
             header = "%d:EXIT:" % (len(packet) / self.CT_BLOCK_SIZE)
-            packet = self.tor_crypt.sign_and_encrypt(header) + packet
+            header = self.tor_crypt.sign_and_encrypt(header)
+
+        logging.debug("ppd: %d, h: %d, p: %d" % (len(self.prev_pubkey_der), len(header), len(packet)))
+        packet = self.prev_pubkey_der + header + packet
 
         if self.entry:
             self.s.connect((self.ip, self.port))
+            logging.info("Entry TRI sending packet of len %d" % len(packet))
             self.s.send(packet)
         else:
+            logging.info("Later TRI returning packet of len %d" % len(packet))
             return packet
 
     def make_request(self, url, request):
