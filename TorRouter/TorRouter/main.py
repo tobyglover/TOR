@@ -64,17 +64,21 @@ class MyTCPHandler(BaseRequestHandler):
             self.forward_response()
     
     def read_circuit_establishment(self):
-        client_pubkey = RSA.importKey(self.request.recv(self.DER_LEN))
+        logging.debug("Waiting for pubkey...")
+        client_pubkey = self.request.recv(self.DER_LEN)
+        logging.debug("Got pubkey (%dB)" % len(client_pubkey))
+        client_pubkey = RSA.importKey(client_pubkey)
         self.client_crypt = Crypt(public_key=client_pubkey,
                                   private_key=self.server.key)
 
         logging.debug("Waiting for header...")
         header = self.request.recv(self.HEADER_SIZE)
         num_chunks, self.next_ip, self.next_port = self.client_crypt.decrypt_and_auth(header).split(":")
-        logging.debug("Received header %s:%s:%s" % (num_chunks, self.next_ip, self.next_port))
+        logging.debug("Received header (%dB) %s:%s:%s" % (len(header), num_chunks, self.next_ip, self.next_port))
 
-        logging.debug("Receiving body of size %d" % (self.CT_BLOCK_SIZE * int(num_chunks)))
+        logging.debug("Waiting for body of %d blocks..." % (int(num_chunks)))
         data = self.request.recv(self.CT_BLOCK_SIZE * int(num_chunks))
+        logging.debug("Received body (%dB)" % len(data))
         data = self.client_crypt.decrypt_and_auth(data)
 
         if self.next_ip == "EXIT":
@@ -99,8 +103,10 @@ class MyTCPHandler(BaseRequestHandler):
 
     def forward_payload(self):
         logging.info('Waiting for payload to forward...')
-        header = self.request.recv(self.HEADER_SIZE)
-        logging.info('Received header of payload')
+        header = ''
+        while len(header) < self.HEADER_SIZE:
+            header += self.request.recv(self.HEADER_SIZE - len(header))
+        logging.info('Received header of payload (%dB)' % len(header))
         header = self.client_crypt.decrypt_and_auth(header)
 
         if self.exit:
