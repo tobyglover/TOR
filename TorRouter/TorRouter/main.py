@@ -5,6 +5,7 @@ TOR router
 3/19/18
 """
 import socket
+from socket import timeout
 from SocketServer import TCPServer, BaseRequestHandler
 import argparse
 from Crypto.PublicKey import RSA
@@ -69,7 +70,8 @@ class MyTCPHandler(BaseRequestHandler):
         logging.debug("Got pubkey (%dB)" % len(client_pubkey))
         client_pubkey = RSA.importKey(client_pubkey)
         self.client_crypt = Crypt(public_key=client_pubkey,
-                                  private_key=self.server.key)
+                                  private_key=self.server.key,
+                                  name="client")
 
         logging.debug("Waiting for header...")
         header = self.request.recv(self.HEADER_SIZE)
@@ -89,11 +91,13 @@ class MyTCPHandler(BaseRequestHandler):
             prev_pubkey, next_pubkey, payload = data[:self.DER_LEN], data[self.DER_LEN:2*self.DER_LEN], \
                                                 data[2*self.DER_LEN:]
             self.next_crypt = Crypt(public_key=RSA.importKey(next_pubkey),
-                                    private_key=self.server.key)
-            self.make_next_hop((self.next_ip, self.next_port), payload)
+                                    private_key=self.server.key,
+                                    name="next_router")
+            self.make_next_hop((self.next_ip, int(self.next_port)), payload)
 
         self.prev_crypt = Crypt(public_key=RSA.importKey(prev_pubkey),
-                                private_key=self.server.key)
+                                private_key=self.server.key,
+                                name="prev_router")
 
     def make_next_hop(self, next_hop, data):
         logging.info("Sending establishment circuit to next router")
@@ -111,31 +115,44 @@ class MyTCPHandler(BaseRequestHandler):
 
         if self.exit:
             num_chunks, ip, port = header.split(":")
+            logging.info("Sending payload to %s:%s" % (ip, port))
             self.next_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.next_sock.connect((ip, int(port)))
         else:
+            logging.info("Forwarding payload to next router")
             num_chunks = header
 
         data = self.request.recv(self.CT_BLOCK_SIZE * int(num_chunks))
         data = self.client_crypt.decrypt_and_auth(data)
+        logging.info("Forwarding payload (%dB)" % len(data))
         self.next_sock.sendall(data)
 
     def forward_response(self):
         if self.exit:
+            logging.info("Getting response from website...")
             chunk = 'asdf'
             payload = ''
+            self.next_sock.settimeout(5)
             while len(chunk) > 0:
-                chunk = self.next_sock.recv(1024)
+                try:
+                    chunk = self.next_sock.recv(1024)
+                except timeout:
+                    chunk = ''
+                logging.debug("Received chunk from website (%dB)" % len(chunk))
                 payload += chunk
+            self.next_sock.settimeout(None)
 
             payload = self.client_crypt.sign_and_encrypt(payload)
-            header = self.prev_crypt.sign_and_encrypt(str(len(payload) / self.CT_BLOCK_SIZE))
         else:
+            logging.info("Getting response from next router...")
             header = self.next_sock.recv(self.HEADER_SIZE)
             num_chunks = self.next_crypt.decrypt_and_auth(header)
-            payload = self.next_sock.recv(num_chunks * self.CT_BLOCK_SIZE)
+            payload = self.next_sock.recv(int(num_chunks) * self.CT_BLOCK_SIZE)
             payload = self.client_crypt.sign_and_encrypt(payload)
 
+        header = self.prev_crypt.sign_and_encrypt(str(len(payload) / self.CT_BLOCK_SIZE))
+
+        logging.info("Forwarding payload")
         self.request.sendall(header + payload)
 
 

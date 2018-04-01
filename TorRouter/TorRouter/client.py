@@ -22,10 +22,31 @@ pip, pport = args.pip, args.pport
 
 logging.info("Getting path")
 tps = TORPathingServer(pip, pport)
-address = tps.get_route()[0]
+# address = tps.get_route()[0]
+#
+# logging.info("Creating TorRouterInterface")
+# tr = TorRouterInterface(address, entry=True)
+#
+# logging.info("Establishing circuit")
+# tr.establish_circuit()
+#
+# logging.info("Making request")
+# print tr.make_request("www.google.com", "GET / HTTP/1.1\nHost: www.google.com\n\n")
+#
+# print
+# print
+# logging.info("RECEIVED PAYLOAD!!!")
+# print
+# print
 
-logging.info("Creating TorRouterInterface")
-tr = TorRouterInterface(address, entry=True)
+logging.info("Getting path")
+addresses = tps.get_route()
 
-logging.info("Establishing circuit")
-tr.establish_circuit()
+logging.info("Creating TorRouterInterfaces")
+trexit  = TorRouterInterface(addresses[0])
+trentry = TorRouterInterface(addresses[1], next_router=trexit, entry=True)
+
+trentry.establish_circuit()
+
+logging.info("Making request")
+print trentry.make_request("www.google.com", "GET / HTTP/1.1\nHost: www.google.com\n\n")
