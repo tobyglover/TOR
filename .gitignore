@@ -104,3 +104,4 @@ ENV/
 .idea
 *.pem
 .DS_store
+.log

@@ -113,9 +113,7 @@ class MyTCPHandler(BaseRequestHandler):
 
     def forward_payload(self):
         logging.info('Waiting for payload to forward...')
-        header = ''
-        while len(header) < self.HEADER_SIZE:
-            header += self.pull(self.request, self.HEADER_SIZE - len(header))
+        header = self.pull(self.request, self.HEADER_SIZE)
         logging.info('Received header of payload (%dB)' % len(header))
         header = self.client_crypt.decrypt_and_auth(header)
 
@@ -141,7 +139,7 @@ class MyTCPHandler(BaseRequestHandler):
             self.next_sock.settimeout(5)
             while len(chunk) > 0:
                 try:
-                    chunk = self.pull(self.next_sock, 1024)
+                    chunk = self.next_sock.recv(1024)
                 except timeout:
                     chunk = ''
                 logging.debug("Received chunk from website (%dB)" % len(chunk))
