@@ -23,6 +23,12 @@ class TorRouterInterface(object):
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         logging.info("Initialized TorRouterInterface")
 
+    def pull(self, length):
+        message = ''
+        while len(message) < length:
+            message += self.s.recv(length - len(message))
+        return message
+
     def establish_circuit(self, prev_pubkey=None):
         logging.info("Establishing circuit")
         if self.entry:
@@ -56,6 +62,12 @@ class TorRouterInterface(object):
             logging.info("Later TRI returning packet of len %d" % len(packet))
             return packet
 
+    def peel_onion(self, onion):
+        if self.next_router:
+            onion = self.crypt.decrypt_and_auth(onion)
+            return self.next_router.peel_onion(onion)
+        return self.crypt.decrypt_and_auth(onion)
+
     def make_request(self, url, request):
         url_port = url.split(":")
         ip = socket.gethostbyname(url_port[0])
@@ -78,14 +90,8 @@ class TorRouterInterface(object):
         else:
             return packet
 
-        header = self.s.recv(self.HEADER_SIZE)
+        header = self.pull(self.HEADER_SIZE)
         num_chunks = int(self.crypt.decrypt_and_auth(header))
 
-        onion = self.s.recv(num_chunks * self.CT_BLOCK_SIZE)
+        onion = self.pull(num_chunks * self.CT_BLOCK_SIZE)
         return self.peel_onion(onion)
-
-    def peel_onion(self, onion):
-        if self.next_router:
-            onion = self.crypt.decrypt_and_auth(onion)
-            return self.next_router.peel_onion(onion)
-        return self.crypt.decrypt_and_auth(onion)

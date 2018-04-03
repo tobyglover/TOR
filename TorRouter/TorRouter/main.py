@@ -52,6 +52,12 @@ class MyTCPHandler(BaseRequestHandler):
         self.prev_crypt = None
         self.next_crypt = None
 
+    def pull(self, sock, length):
+        message = ''
+        while len(message) < length:
+            message += sock.recv(length - len(message))
+        return message
+
     def handle(self):
         logging.info('handling connection from %s:%s' % self.client_address)
         logging.info('Establishing circuit')
@@ -66,7 +72,7 @@ class MyTCPHandler(BaseRequestHandler):
     
     def read_circuit_establishment(self):
         logging.debug("Waiting for pubkey...")
-        client_pubkey = self.request.recv(self.DER_LEN)
+        client_pubkey = self.pull(self.request, self.DER_LEN)
         logging.debug("Got pubkey (%dB)" % len(client_pubkey))
         client_pubkey = RSA.importKey(client_pubkey)
         self.client_crypt = Crypt(public_key=client_pubkey,
@@ -74,12 +80,12 @@ class MyTCPHandler(BaseRequestHandler):
                                   name="client")
 
         logging.debug("Waiting for header...")
-        header = self.request.recv(self.HEADER_SIZE)
+        header = self.pull(self.request, self.HEADER_SIZE)
         num_chunks, self.next_ip, self.next_port = self.client_crypt.decrypt_and_auth(header).split(":")
         logging.debug("Received header (%dB) %s:%s:%s" % (len(header), num_chunks, self.next_ip, self.next_port))
 
         logging.debug("Waiting for body of %d blocks..." % (int(num_chunks)))
-        data = self.request.recv(self.CT_BLOCK_SIZE * int(num_chunks))
+        data = self.pull(self.request, self.CT_BLOCK_SIZE * int(num_chunks))
         logging.debug("Received body (%dB)" % len(data))
         data = self.client_crypt.decrypt_and_auth(data)
 
@@ -109,7 +115,7 @@ class MyTCPHandler(BaseRequestHandler):
         logging.info('Waiting for payload to forward...')
         header = ''
         while len(header) < self.HEADER_SIZE:
-            header += self.request.recv(self.HEADER_SIZE - len(header))
+            header += self.pull(self.request, self.HEADER_SIZE - len(header))
         logging.info('Received header of payload (%dB)' % len(header))
         header = self.client_crypt.decrypt_and_auth(header)
 
@@ -122,7 +128,7 @@ class MyTCPHandler(BaseRequestHandler):
             logging.info("Forwarding payload to next router")
             num_chunks = header
 
-        data = self.request.recv(self.CT_BLOCK_SIZE * int(num_chunks))
+        data = self.pull(self.request, self.CT_BLOCK_SIZE * int(num_chunks))
         data = self.client_crypt.decrypt_and_auth(data)
         logging.info("Forwarding payload (%dB)" % len(data))
         self.next_sock.sendall(data)
@@ -135,7 +141,7 @@ class MyTCPHandler(BaseRequestHandler):
             self.next_sock.settimeout(5)
             while len(chunk) > 0:
                 try:
-                    chunk = self.next_sock.recv(1024)
+                    chunk = self.pull(self.next_sock, 1024)
                 except timeout:
                     chunk = ''
                 logging.debug("Received chunk from website (%dB)" % len(chunk))
@@ -145,9 +151,9 @@ class MyTCPHandler(BaseRequestHandler):
             payload = self.client_crypt.sign_and_encrypt(payload)
         else:
             logging.info("Getting response from next router...")
-            header = self.next_sock.recv(self.HEADER_SIZE)
+            header = self.pull(self.next_sock, self.HEADER_SIZE)
             num_chunks = self.next_crypt.decrypt_and_auth(header)
-            payload = self.next_sock.recv(int(num_chunks) * self.CT_BLOCK_SIZE)
+            payload = self.pull(self.next_sock, int(num_chunks) * self.CT_BLOCK_SIZE)
             payload = self.client_crypt.sign_and_encrypt(payload)
 
         header = self.prev_crypt.sign_and_encrypt(str(len(payload) / self.CT_BLOCK_SIZE))
