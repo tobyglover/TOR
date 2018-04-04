@@ -63,13 +63,13 @@ class MyTCPHandler(BaseRequestHandler):
         logging.info('Establishing circuit')
         self.read_circuit_establishment()
 
-        while True:
-            logging.info('Forwarding payload')
-            self.forward_payload()
-
+        logging.info('Forwarding payload')
+        while self.forward_payload():
             logging.info('Forwarding response')
             self.forward_response()
-    
+
+            logging.info('Forwarding payload')
+
     def read_circuit_establishment(self):
         logging.debug("Waiting for pubkey...")
         client_pubkey = self.pull(self.request, self.DER_LEN)
@@ -119,17 +119,25 @@ class MyTCPHandler(BaseRequestHandler):
 
         if self.exit:
             num_chunks, ip, port = header.split(":")
+            if ip == "CLOSE":
+                logging.info("Closing circuit")
+                return False
+            close = "OK"
             logging.info("Sending payload to %s:%s" % (ip, port))
             self.next_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.next_sock.connect((ip, int(port)))
         else:
-            logging.info("Forwarding payload to next router")
-            num_chunks = header
+            num_chunks, close = header.split(":")
 
         data = self.pull(self.request, self.CT_BLOCK_SIZE * int(num_chunks))
         data = self.client_crypt.decrypt_and_auth(data)
+        if close:
+            logging.info("Closing circuit")
+            self.next_sock.sendall(data)
+            return False
         logging.info("Forwarding payload (%dB)" % len(data))
         self.next_sock.sendall(data)
+        return True
 
     def forward_response(self):
         if self.exit:

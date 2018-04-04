@@ -57,7 +57,7 @@ class TorRouterInterface(object):
         if self.entry:
             self.s.connect((self.ip, self.port))
             logging.info("Entry TRI sending packet of len %d" % len(packet))
-            self.s.send(packet)
+            self.s.sendall(packet)
         else:
             logging.info("Later TRI returning packet of len %d" % len(packet))
             return packet
@@ -78,7 +78,7 @@ class TorRouterInterface(object):
         if self.next_router:
             packet = self.next_router.make_request(url, request)
             packet = self.crypt.sign_and_encrypt(packet)
-            header = str(len(packet) / self.CT_BLOCK_SIZE)
+            header = "%d:" % (len(packet) / self.CT_BLOCK_SIZE)
             packet = self.crypt.sign_and_encrypt(header) + packet
         else:
             packet = self.crypt.sign_and_encrypt(request)
@@ -87,7 +87,7 @@ class TorRouterInterface(object):
 
         if self.entry:
             logging.info("Sending packet")
-            self.s.send(packet)
+            self.s.sendall(packet)
         else:
             return packet
 
@@ -99,6 +99,18 @@ class TorRouterInterface(object):
         logging.info("Received response")
         return self.peel_onion(onion)
 
-    # def close_circuit(self):
-    #     if self.next_router:
+    def close_circuit(self):
+        if self.next_router:
+            packet = self.next_router.close_circuit()
+            packet = self.crypt.sign_and_encrypt(packet)
+            header = "%d:CLOSE" % (len(packet) / self.CT_BLOCK_SIZE)
+            packet = self.crypt.sign_and_encrypt(header) + packet
+        else:
+            packet = "0:CLOSE"
+            packet = self.crypt.sign_and_encrypt(packet)
 
+        if self.entry:
+            logging.info("Closing circuit")
+            self.s.sendall(packet)
+        else:
+            return packet
