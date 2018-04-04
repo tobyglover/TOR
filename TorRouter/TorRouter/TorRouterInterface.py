@@ -86,12 +86,19 @@ class TorRouterInterface(object):
             packet = self.crypt.sign_and_encrypt(header) + packet
 
         if self.entry:
+            logging.info("Sending packet")
             self.s.send(packet)
         else:
             return packet
 
+        logging.info("Waiting for response...")
         header = self.pull(self.HEADER_SIZE)
         num_chunks = int(self.crypt.decrypt_and_auth(header))
 
         onion = self.pull(num_chunks * self.CT_BLOCK_SIZE)
+        logging.info("Received response")
         return self.peel_onion(onion)
+
+    # def close_circuit(self):
+    #     if self.next_router:
+

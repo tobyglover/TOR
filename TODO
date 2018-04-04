@@ -1,6 +1,12 @@
-Signal for kill circuit
-No key in plain text
-Better recv from exit node
-Multithreading?
-Introspection functions
+Better receive from exit node (not based on timeout)
+Adding a protocol to close the circuit
+Adding persistence/crash tolerance to the Pathfinding Server (and potentially routers)
+Adding SSL for communication
+Introspection functions/better benchmarking
+Pathing server should ping routers in a new path to make sure they are still active
+Adding session IDs
+Having the Pathfinding Server sign client keys
+Adding multithreading to servers for concurrent connections
 Network engineering/load balancing
+Add return of success to circuit establishment protocol
+HTTPS

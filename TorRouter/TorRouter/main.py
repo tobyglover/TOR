@@ -136,7 +136,7 @@ class MyTCPHandler(BaseRequestHandler):
             logging.info("Getting response from website...")
             chunk = 'asdf'
             payload = ''
-            self.next_sock.settimeout(5)
+            self.next_sock.settimeout(1)
             while len(chunk) > 0:
                 try:
                     chunk = self.next_sock.recv(1024)

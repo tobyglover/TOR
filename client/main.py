@@ -15,6 +15,7 @@ formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 ch.setFormatter(formatter)
 root.addHandler(ch)
 
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("port", type=int, help="Port to bind Tor proxy to")
@@ -33,14 +34,8 @@ class TorProxy(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             url = self.headers.dict['host']
-            # print self.headers.dict
             self.headers.dict.pop('proxy-connection')
             headers = str(self.headers).replace("Proxy-", "")
-            # print headers
-            # print self.headers.dict
-            # print str(self.headers)
-            # print self.client_address
-            # print self.raw_requestline
             path = '/'.join(str(self.path).split("/")[3:])
             request = "GET /%s %s\r\n%s\r\n" % (path, self.protocol_version, headers)
             logging.info("Getting request")
@@ -50,26 +45,6 @@ class TorProxy(BaseHTTPRequestHandler):
         except KeyError:
             logging.error("Bad request")
             self.send_error(400)
-
-        # self.send_response(200)
-        # self.end_headers()
-        # self.wfile.write(b'Hello, world!')
-        # print "*** COMMAND:"
-        # print self.command
-        # print "*** PROTOCOL_VERSION"
-        # print self.protocol_version
-        # print "*** PATH"
-        # print self.path
-        # # print "*** RESPONSES"
-        # # print self.responses
-        # print "*** CLIENT ADDRESS:"
-        # print self.client_address
-        # print "*** HEADERS:"
-        # print self.headers
-        # print "*** HOST:"
-        # print self.headers.dict['host']
-        # print "*** REQUEST ***"
-        # print "GET %s %s\n%s" % (self.path, self.protocol_version, str(self.headers))
 
 
 class TorClient(object):
@@ -89,7 +64,7 @@ class TorClient(object):
             route = self.path_server.get_route()
             tr3 = TorRouterInterface(route[2])
             tr2 = TorRouterInterface(route[1], tr3)
-            tor_interface = TorRouterInterface(route[1], tr3, True)
+            tor_interface = TorRouterInterface(route[0], tr2, True)
             tor_interface.establish_circuit()
             self.has_route = True
 
