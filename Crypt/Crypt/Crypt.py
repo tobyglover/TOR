@@ -9,10 +9,15 @@ KEY_SIZE = 2048
 
 class Crypt(object):
 
-    def __init__(self, private_key=None, public_key=None, name=''):
+    def __init__(self, private_key=None, public_key=None, name='', debug=False):
         self._public_key = public_key
         self._private_key = private_key
         self._name = name
+        self._debug = debug
+
+    def log(self, message):
+        if self._debug:
+            logging.debug(message)
 
     def generate_key(self):
         return RSA.generate(KEY_SIZE)
@@ -25,8 +30,8 @@ class Crypt(object):
 
     def sign_and_encrypt(self, data):
         cipher = PKCS1_OAEP.new(self._public_key)
-        logging.debug("Signing with own key %s" % self._private_key.publickey().exportKey(format="DER").encode('hex')[66:74])
-        logging.debug("Encrypting with %s's key %s" % (self._name, self._public_key.exportKey(format="DER").encode('hex')[66:74]))
+        self.log("Signing with own key %s" % self._private_key.publickey().exportKey(format="DER").encode('hex')[66:74])
+        self.log("Encrypting with %s's key %s" % (self._name, self._public_key.exportKey(format="DER").encode('hex')[66:74]))
         signature = pss.new(self._private_key).sign(SHA256.new(data))
         data = signature + data
 
@@ -40,8 +45,8 @@ class Crypt(object):
 
     # raises error if verification fails
     def decrypt_and_auth(self, message):
-        logging.debug("Checking signature with %s's key %s" % (self._name, self._public_key.exportKey(format="DER").encode('hex')[66:74]))
-        logging.debug("Decrypting with own key %s" % self._private_key.publickey().exportKey(format="DER").encode('hex')[66:74])
+        self.log("Checking signature with %s's key %s" % (self._name, self._public_key.exportKey(format="DER").encode('hex')[66:74]))
+        self.log("Decrypting with own key %s" % self._private_key.publickey().exportKey(format="DER").encode('hex')[66:74])
 
         cipher = PKCS1_OAEP.new(self._private_key)
         verifier = pss.new(self._public_key)
@@ -57,6 +62,7 @@ class Crypt(object):
         verifier.verify(SHA256.new(data[256:]), data[:256])
         return data[256:]
 
+
 def test():
     key1 = Crypt().generate_key()
     key2 = Crypt().generate_key()
@@ -68,6 +74,7 @@ def test():
         print "Test pass"
     else:
         raise TypeError('TEST DID NOT PASS')
+
 
 if __name__ == '__main__':
     test()

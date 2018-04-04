@@ -106,7 +106,7 @@ class TorRouterInterface(object):
             header = "%d:CLOSE" % (len(packet) / self.CT_BLOCK_SIZE)
             packet = self.crypt.sign_and_encrypt(header) + packet
         else:
-            packet = "0:CLOSE"
+            packet = "0:CLOSE:"
             packet = self.crypt.sign_and_encrypt(packet)
 
         if self.entry:
