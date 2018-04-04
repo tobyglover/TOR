@@ -31,20 +31,53 @@ tor_interface = None
 
 class TorProxy(BaseHTTPRequestHandler):
 
-    def do_GET(self):
+    def forward_request(self, method):
         try:
             url = self.headers.dict['host']
-            self.headers.dict.pop('proxy-connection')
+            # self.headers.dict.pop('proxy-connection')
             headers = str(self.headers).replace("Proxy-", "")
             path = '/'.join(str(self.path).split("/")[3:])
-            request = "GET /%s %s\r\n%s\r\n" % (path, self.protocol_version, headers)
-            logging.info("Getting request")
+            request = "%s /%s %s\r\n%s\r\n" % (method, path, self.protocol_version, headers)
+            logging.info("Sending request")
             resp = tor_interface.make_request(url, request)
-            logging.info("Returning request")
+            logging.info("Returning request...")
             self.wfile.write(resp)
+            logging.info("Served client")
         except KeyError:
             logging.error("Bad request")
             self.send_error(400)
+
+    def do_CONNECT(self):
+        logging.info("Handling CONNECT")
+        self.forward_request("CONNECT")
+
+    def do_DELETE(self):
+        logging.info("Handling DELETE")
+        self.forward_request("DELETE")
+
+    def do_GET(self):
+        logging.info("Handling GET")
+        self.forward_request("GET")
+
+    def do_HEAD(self):
+        logging.info("Handling HEAD")
+        self.forward_request("HEAD")
+
+    def do_OPTIONS(self):
+        logging.info("Handling OPTIONS")
+        self.forward_request("OPTIONS")
+
+    def do_PATCH(self):
+        logging.info("Handling PATCH")
+        self.forward_request("PATCH")
+
+    def do_POST(self):
+        logging.info("Handling POST")
+        self.forward_request("POST")
+
+    def do_PUT(self):
+        logging.info("Handling PUT")
+        self.forward_request("PUT")
 
 
 class TorClient(object):
