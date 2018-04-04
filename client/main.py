@@ -69,6 +69,7 @@ class TorClient(object):
             self.has_route = True
 
     def run_client(self):
+        global tor_interface
         while True:
             try:
                 logging.info("Establishing path")
@@ -78,6 +79,11 @@ class TorClient(object):
             except PathingFailed:
                 print "Pathing failed: try again later"
                 return
+            except:
+                logging.info("Closing circuit...")
+                tor_interface.close_circuit()
+                logging.info("Exiting")
+                break
 
 
 def main():

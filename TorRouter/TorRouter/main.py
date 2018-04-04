@@ -131,7 +131,7 @@ class MyTCPHandler(BaseRequestHandler):
 
         data = self.pull(self.request, self.CT_BLOCK_SIZE * int(num_chunks))
         data = self.client_crypt.decrypt_and_auth(data)
-        if close:
+        if close == "CLOSE":
             logging.info("Closing circuit")
             self.next_sock.sendall(data)
             return False

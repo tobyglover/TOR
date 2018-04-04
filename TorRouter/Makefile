@@ -14,6 +14,8 @@ stop:
 
 clean:
 	-docker exec router$(CONT).cont kill -s SIGINT $$(docker exec -it router$(CONT).cont ps | grep 'TorRouter' | awk '{print $$1}') ; \
+	docker exec router$(CONT).cont kill -s SIGINT $$(docker exec -it router$(CONT).cont ps | grep 'TorRouter' | awk '{print $$1}') ; \
+	docker exec router$(CONT).cont kill -s SIGINT $$(docker exec -it router$(CONT).cont ps | grep 'TorRouter' | awk '{print $$1}') ; \
 	sleep 1 ; \
     docker container stop router$(CONT).cont ; \
 	docker container rm router$(CONT).cont
