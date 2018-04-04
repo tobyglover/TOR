@@ -71,7 +71,7 @@ class TorRouterInterface(object):
     def make_request(self, url, request):
         url_port = url.split(":")
         ip = socket.gethostbyname(url_port[0])
-        port = url_port[1] if len(url_port) == 2 else 80
+        port = int(url_port[1]) if len(url_port) == 2 else 80
 
         logging.info("Requesting %s:%d" % (ip, port))
 
