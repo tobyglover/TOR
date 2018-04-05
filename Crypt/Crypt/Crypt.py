@@ -2,6 +2,10 @@ from Crypto.PublicKey import RSA
 from Crypto.Signature import pss
 from Crypto.Hash import SHA256
 from Crypto.Cipher import PKCS1_OAEP
+from Crypto.Protocol.KDF import PBKDF2
+from Crypto.Cipher import AES
+from Crypto.Random import get_random_bytes
+import struct
 import logging
 
 MAX_MSG_LEN = 214 # determined manually for RSA2048 key, padding with PKCS1_OAEP
@@ -63,6 +67,119 @@ class Crypt(object):
         return data[256:]
 
 
+class BadSID(Exception):
+    pass
+
+
+class MACMismatch(Exception):
+    pass
+
+
+class Symmetric(object):
+    CRYPT_HEADER_LEN = 16 * 5
+    STATUS_OK = "OKOK"
+    STATUS_EXIT = "EXIT"
+
+    def __init__(self, key, sid="\00"*8):
+        self.raw_key = key
+        self.sid = sid
+        self.key = None
+        self.salt = None
+        self.head_nonce = None
+        self.head_tag = None
+        self.body_nonce = None
+        self.body_tag = None
+
+    def absorb_crypto_header(self, header):
+        """Absorbs the cryptographic information in the crypto header
+
+        Args:
+            header (str): 80B cryptographic header
+        """
+        self.salt, self.head_tag, self.head_nonce, self.body_tag, self.body_nonce \
+            = [header[i:i+16] for i in range(0, 16 * 5, 16)]
+
+    def decrypt_header(self, header):
+        """Decrypts and authenticates the packet header
+
+        Args:
+            header (str): 16B header
+
+        Returns:
+            (int, str): number of 16B chunks to come and status message
+
+        Raises:
+            MACMismatch: data authentication failed
+            BadSID: SID doesn't match
+        """
+        key = PBKDF2(self.raw_key, self.salt)
+        cipher = AES.new(key, AES.MODE_GCM, self.head_nonce)
+
+        cipher.update(self.sid)
+        try:
+            header = cipher.decrypt_and_verify(header, self.head_tag)
+        except ValueError:
+            raise MACMismatch
+        num_chunks, status, sid = struct.unpack("!L4s8s", header)
+
+        if self.sid != sid:
+            raise BadSID
+
+        return num_chunks, status
+
+    def decrypt_body(self, data):
+        """Decrypts and authenticates the packet header
+
+        Args:
+            data (str): data (multiple of 16B)
+
+        Returns:
+            str: decrypted and authenticated data
+
+        Raises:
+            MACMismatch: data authentication failed
+        """
+        key = PBKDF2(self.raw_key, self.salt)
+        cipher = AES.new(key, AES.MODE_GCM, self.body_nonce)
+
+        cipher.update(self.sid)
+        try:
+            return cipher.decrypt_and_verify(data, self.body_tag)
+        except ValueError:
+            raise MACMismatch
+
+    def encrypt_payload(self, data, status):
+        """Encrypts and data and formats into packet
+
+        Args:
+            data (str): data to encrypt
+            status (str): 4B status string
+
+        Returns:
+            str: encrypted data
+        """
+        # encrypt body
+        salt = get_random_bytes(16)
+        key = PBKDF2(self.raw_key, salt)
+        cipher = AES.new(key, AES.MODE_GCM)
+        cipher.update(self.sid)
+        ct, body_tag = cipher.encrypt_and_digest(data)
+        body_nonce = cipher.nonce
+
+        # build header
+        num_chuks = len(ct) / 16
+        header = struct.pack("!L4s8s", num_chuks, status, self.sid)
+
+        # encrypt header
+        cipher = AES.new(key, AES.MODE_GCM)
+        cipher.update(self.sid)
+        header, head_tag = cipher.encrypt_and_digest(header)
+        head_nonce = cipher.nonce
+
+        crypto_head = salt + head_tag + head_nonce + body_tag + body_nonce
+        return crypto_head + header + ct
+
+
 def test():
     key1 = Crypt().generate_key()
     key2 = Crypt().generate_key()
@@ -76,5 +193,21 @@ def test():
         raise TypeError('TEST DID NOT PASS')
 
 
+def test_sym():
+    key = get_random_bytes(16)
+    sid = "12345678"
+    message = "This is the example message! " * 29
+    status = "OKOK"
+    c1 = Symmetric(key, sid)
+
+    packet = c1.encrypt_payload(message, status)
+
+    c2 = Symmetric(key, sid)
+    c2.absorb_crypto_header(packet[:c2.CRYPT_HEADER_LEN])
+
+    print c2.decrypt_header(packet[c2.CRYPT_HEADER_LEN:c2.CRYPT_HEADER_LEN+16])
+    print c2.decrypt_body(packet[c2.CRYPT_HEADER_LEN+16:])
+
+
 if __name__ == '__main__':
-    test()
+    test_sym()
