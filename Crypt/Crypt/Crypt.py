@@ -106,7 +106,7 @@ class Symmetric(object):
             header (str): 16B header
 
         Returns:
-            (int, str): number of 16B chunks to come and status message
+            (int, str): number of bytes to come and status message
 
         Raises:
             MACMismatch: data authentication failed
@@ -120,12 +120,12 @@ class Symmetric(object):
             header = cipher.decrypt_and_verify(header, self.head_tag)
         except ValueError:
             raise MACMismatch
-        num_chunks, status, sid = struct.unpack("!L4s8s", header)
+        num_bytes, status, sid = struct.unpack("!L4s8s", header)
 
         if self.sid != sid:
             raise BadSID
 
-        return num_chunks, status
+        return num_bytes, status
 
     def decrypt_body(self, data):
         """Decrypts and authenticates the packet header
@@ -167,8 +167,7 @@ class Symmetric(object):
         body_nonce = cipher.nonce
 
         # build header
-        num_chuks = len(ct) / 16
-        header = struct.pack("!L4s8s", num_chuks, status, self.sid)
+        header = struct.pack("!L4s8s", len(ct), status, self.sid)
 
         # encrypt header
         cipher = AES.new(key, AES.MODE_GCM)

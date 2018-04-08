@@ -3,11 +3,16 @@ import socket
 import struct
 from Crypto.PublicKey import RSA
 from Crypt import Crypt
+from random import shuffle
+from os import urandom
+import struct
 
 ROUTE_INFO_SIZE = DER_KEY_SIZE + 8
 
+
 class PathingFailed(Exception):
     pass
+
 
 class Connection(object):
     def __init__(self, server_ip, server_port, private_key):
@@ -39,18 +44,20 @@ class Connection(object):
         self.send(MSG_TYPES.CLOSE)
         self._socket.close()
 
-"""
-TORPathingServer
 
-Wrapper around communication between the TOR pathing server and the clients or
-routers in the network. Supports sregistering and deregistering TOR routers
-and getting a route for a client in the network.
-
-args:
-    server_ip (str): ip address of pathing server
-    server_port (int): port number of the pathing server
-"""
 class TORPathingServer(object):
+    """
+    TORPathingServer
+
+    Wrapper around communication between the TOR pathing server and the clients or
+    routers in the network. Supports sregistering and deregistering TOR routers
+    and getting a route for a client in the network.
+
+    args:
+        server_ip (str): ip address of pathing server
+        server_port (int): port number of the pathing server
+    """
+
     def __init__(self, server_ip, server_port):
         self._server_ip = server_ip
         self._server_port = server_port
@@ -115,5 +122,36 @@ class TORPathingServer(object):
             data = route_data[i * ROUTE_INFO_SIZE:(i + 1) * ROUTE_INFO_SIZE]
             route.append(self._parse_route_node(data))
             i += 1
+
+        return route
+
+
+class TestTORPathingServer(object):
+    def __init__(self, server_ip, server_port):
+        self._server_ip = server_ip
+        self._server_port = server_port
+        self._router_id = None
+        self.private_key = Crypt().generate_key()
+        self.routers = []
+
+    def __del__(self):
+        self.unregister()
+
+    def register(self, port, public_key):
+        self.routers = ("127.0.0.1", port, public_key)
+
+    def unregister(self):
+        pass
+
+    def get_route(self):
+        shuffle(self.routers)
+        route = []
+        for r in self.routers[:3]:
+            ip, port, pk = r
+            c = Crypt(public_key=pk, private_key=self.private_key)
+            sid = urandom(16)
+            sym_key = urandom(16)
+            enc_pkt = c.sign_and_encrypt("ESTB" + sid + sym_key)
+            route += (enc_pkt, ip, port, pk, sym_key)
 
         return route
