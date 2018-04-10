@@ -132,26 +132,35 @@ class TestTORPathingServer(object):
         self._server_port = server_port
         self._router_id = None
         self.private_key = Crypt().generate_key()
+        self.rid = urandom(16)
         self.routers = []
 
     def __del__(self):
         self.unregister()
 
     def register(self, port, public_key):
-        self.routers = ("127.0.0.1", port, public_key)
+        self.routers.append(("127.0.0.1", port, public_key))
 
     def unregister(self):
         pass
 
     def get_route(self):
-        shuffle(self.routers)
         route = []
+        # print self.routers
         for r in self.routers[:3]:
             ip, port, pk = r
             c = Crypt(public_key=pk, private_key=self.private_key)
-            sid = urandom(16)
+            sid = urandom(8)
             sym_key = urandom(16)
-            enc_pkt = c.sign_and_encrypt("ESTB" + sid + sym_key)
-            route += (enc_pkt, ip, port, pk, sym_key)
+            enc_pkt = c.sign_and_encrypt("ESTB" + self.rid + sid + sym_key)
+            # print "SIMKEYC", port, sym_key.encode("hex")
+            # print "SID   C", port, sid.encode("hex")
+            # print 'DATA', port, len("ESTB" + self.rid + sid + sym_key), ("ESTB" + self.rid + sid + sym_key).encode("hex")[:16], ("ESTB" + self.rid + sid + sym_key).encode("hex")[-16:]
+            # print "r%d: Encrypting with %s Signing with %s - %s...%s:%s...%s (%dB)" % (port, pk.exportKey('DER').encode('hex')[70:86],
+            #                                                         self.private_key.publickey().exportKey('DER').encode('hex')[70:86],
+            #                                                         enc_pkt.encode('hex')[:16], enc_pkt.encode('hex')[-16:],
+            #                                                         ("ESTB" + sid + sym_key).encode('hex')[:16],
+            #                                                         ("ESTB" + sid + sym_key).encode('hex')[-16:],len(enc_pkt))
+            route.append((enc_pkt, ip, port, pk, sid, sym_key))
 
         return route

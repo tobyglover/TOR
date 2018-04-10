@@ -5,13 +5,26 @@ from Crypto.Cipher import PKCS1_OAEP
 from Crypto.Protocol.KDF import PBKDF2
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
+from os import urandom
 import struct
 import logging
+import sys
 
 MAX_MSG_LEN = 214 # determined manually for RSA2048 key, padding with PKCS1_OAEP
 KEY_SIZE = 2048
 
+root = logging.getLogger()
+root.setLevel(logging.DEBUG)
+
+ch = logging.StreamHandler(sys.stdout)
+ch.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+root.addHandler(ch)
+
+
 class Crypt(object):
+    PUB_DER_LEN = len(RSA.generate(KEY_SIZE).publickey().exportKey('DER'))
 
     def __init__(self, private_key=None, public_key=None, name='', debug=False):
         self._public_key = public_key
@@ -37,6 +50,7 @@ class Crypt(object):
         self.log("Signing with own key %s" % self._private_key.publickey().exportKey(format="DER").encode('hex')[66:74])
         self.log("Encrypting with %s's key %s" % (self._name, self._public_key.exportKey(format="DER").encode('hex')[66:74]))
         signature = pss.new(self._private_key).sign(SHA256.new(data))
+        # print signature.encode('hex')[:16], signature.encode('hex')[-16:], data.encode('hex')[:16], data.encode('hex')[-16:]
         data = signature + data
 
         message = ""
@@ -47,13 +61,11 @@ class Crypt(object):
 
         return message
 
-    # raises error if verification fails
-    def decrypt_and_auth(self, message):
+    def decrypt(self, message):
         self.log("Checking signature with %s's key %s" % (self._name, self._public_key.exportKey(format="DER").encode('hex')[66:74]))
         self.log("Decrypting with own key %s" % self._private_key.publickey().exportKey(format="DER").encode('hex')[66:74])
 
         cipher = PKCS1_OAEP.new(self._private_key)
-        verifier = pss.new(self._public_key)
         chunk_size = KEY_SIZE / 8
         data = ""
         i = 0
@@ -63,8 +75,18 @@ class Crypt(object):
             data += cipher.decrypt(chunk)
             i += 1
 
-        verifier.verify(SHA256.new(data[256:]), data[:256])
-        return data[256:]
+        # print data[:256].encode('hex')[:16], data[:256].encode('hex')[-16:], data[256:].encode('hex')[:16], data[256:].encode('hex')[-16:]
+        return data[256:], data[:256]
+
+    def auth(self, data, hash):
+        verifier = pss.new(self._public_key)
+        verifier.verify(SHA256.new(data), hash)
+
+    # raises error if verification fails
+    def decrypt_and_auth(self, message):
+        data, hash = self.decrypt(message)
+        self.auth(data, hash)
+        return data
 
 
 class BadSID(Exception):
@@ -77,10 +99,11 @@ class MACMismatch(Exception):
 
 class Symmetric(object):
     CRYPT_HEADER_LEN = 16 * 5
+    HEADER_LEN = 16
     STATUS_OK = "OKOK"
     STATUS_EXIT = "EXIT"
 
-    def __init__(self, key, sid="\00"*8):
+    def __init__(self, key='', sid="\00"*8):
         self.raw_key = key
         self.sid = sid
         self.key = None
@@ -89,6 +112,14 @@ class Symmetric(object):
         self.head_tag = None
         self.body_nonce = None
         self.body_tag = None
+
+    def generate(self):
+        return urandom(16)
+
+    def unpack_payload(self, payload):
+        return (payload[:self.CRYPT_HEADER_LEN],
+                payload[self.CRYPT_HEADER_LEN:self.CRYPT_HEADER_LEN + self.HEADER_LEN],
+                payload[self.CRYPT_HEADER_LEN + self.HEADER_LEN:])
 
     def absorb_crypto_header(self, header):
         """Absorbs the cryptographic information in the crypto header
@@ -123,15 +154,17 @@ class Symmetric(object):
         num_bytes, status, sid = struct.unpack("!L4s8s", header)
 
         if self.sid != sid:
+            print self.sid.encode("hex")
+            print sid.encode('hex')
             raise BadSID
 
         return num_bytes, status
 
-    def decrypt_body(self, data):
+    def decrypt_body(self, body):
         """Decrypts and authenticates the packet header
 
         Args:
-            data (str): data (multiple of 16B)
+            body (str): data (multiple of 16B)
 
         Returns:
             str: decrypted and authenticated data
@@ -144,7 +177,7 @@ class Symmetric(object):
 
         cipher.update(self.sid)
         try:
-            return cipher.decrypt_and_verify(data, self.body_tag)
+            return cipher.decrypt_and_verify(body, self.body_tag)
         except ValueError:
             raise MACMismatch
 
@@ -182,8 +215,8 @@ class Symmetric(object):
 def test():
     key1 = Crypt().generate_key()
     key2 = Crypt().generate_key()
-    crypt1 = Crypt(key1, key2.publickey())
-    crypt2 = Crypt(key2, key1.publickey())
+    crypt1 = Crypt(key1, key2.publickey(), debug=True)
+    crypt2 = Crypt(key2, key1.publickey(), debug=True)
     message = "this is a test"
     data = crypt1.sign_and_encrypt(message)
     if crypt2.decrypt_and_auth(data) == message:
@@ -195,18 +228,22 @@ def test():
 def test_sym():
     key = get_random_bytes(16)
     sid = "12345678"
-    message = "This is the example message! " * 29
+    message = "This is the example message! " * 0
     status = "OKOK"
     c1 = Symmetric(key, sid)
 
     packet = c1.encrypt_payload(message, status)
 
-    c2 = Symmetric(key, sid)
-    c2.absorb_crypto_header(packet[:c2.CRYPT_HEADER_LEN])
+    print c1.unpack_payload(packet)
+    crypt_header, header, body = c1.unpack_payload(packet)
 
-    print c2.decrypt_header(packet[c2.CRYPT_HEADER_LEN:c2.CRYPT_HEADER_LEN+16])
-    print c2.decrypt_body(packet[c2.CRYPT_HEADER_LEN+16:])
+    c2 = Symmetric(key, sid)
+    c2.absorb_crypto_header(crypt_header)
+
+    print c2.decrypt_header(header)
+    print c2.decrypt_body(body)
 
 
 if __name__ == '__main__':
+    # test()
     test_sym()

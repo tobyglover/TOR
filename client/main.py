@@ -3,8 +3,9 @@ import argparse
 import logging
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 import sys
-from TorPathingServer import TORPathingServer, PathingFailed
-from TorRouter import TorRouterInterface
+from TorPathingServer import TORPathingServer, PathingFailed, TestTORPathingServer
+from TorRouter import TorRouterInterface, TestTorRouterInterface
+from Crypt import Crypt
 
 root = logging.getLogger()
 root.setLevel(logging.DEBUG)
@@ -82,9 +83,12 @@ class TorProxy(BaseHTTPRequestHandler):
 
 class TorClient(object):
 
-    def __init__(self, port, p_ip, p_port):
-        global tor_interface
-        self.path_server = TORPathingServer(p_ip, p_port)
+    def __init__(self, port, p_ip, p_port, test):
+        self.test = test
+        if test:
+            self.path_server = TestTORPathingServer(p_ip, p_port)
+        else:
+            self.path_server = TORPathingServer(p_ip, p_port)
         self.has_route = False
         logging.info("Initializing TorProxy server")
         self.tp = HTTPServer(('localhost', port), TorProxy)
@@ -94,10 +98,24 @@ class TorClient(object):
 
         # TODO: stale path
         if not self.has_route:
+            if self.test:
+                rk1 = Crypt().generate_key()
+                rk2 = Crypt().generate_key()
+                rk3 = Crypt().generate_key()
+                spk = self.path_server.private_key.publickey()
+                self.path_server.register(1, rk1.publickey())
+                self.path_server.register(2, rk2.publickey())
+                self.path_server.register(3, rk3.publickey())
             route = self.path_server.get_route()
-            tr3 = TorRouterInterface(route[2])
-            tr2 = TorRouterInterface(route[1], tr3)
-            tor_interface = TorRouterInterface(route[0], tr2, True)
+            if self.test:
+                # print route
+                tr3 = TestTorRouterInterface(route[2], is_exit=True, own_key=rk3, server_pubkey=spk)
+                tr2 = TestTorRouterInterface(route[1], tr3, own_key=rk2, server_pubkey=spk)
+                tor_interface = TestTorRouterInterface(route[0], tr2, is_entry=True, own_key=rk1, server_pubkey=spk)
+            else:
+                tr3 = TorRouterInterface(route[2])
+                tr2 = TorRouterInterface(route[1], tr3)
+                tor_interface = TorRouterInterface(route[0], tr2, True)
             tor_interface.establish_circuit()
             self.has_route = True
 
@@ -112,17 +130,17 @@ class TorClient(object):
             except PathingFailed:
                 print "Pathing failed: try again later"
                 return
-            except:
-                logging.info("Closing circuit...")
-                tor_interface.close_circuit()
-                logging.info("Exiting")
-                break
+            # except:
+            #     logging.info("Closing circuit...")
+            #     tor_interface.close_circuit()
+            #     logging.info("Exiting")
+            #     break
 
 
 def main():
     port, p_ip, p_port, testti = parse_args()
 
-    tc = TorClient(port, p_ip, p_port)
+    tc = TorClient(port, p_ip, p_port, testti)
     tc.run_client()
 
 

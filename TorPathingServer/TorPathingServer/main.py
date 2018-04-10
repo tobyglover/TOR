@@ -54,7 +54,6 @@ class TCPHandler(BaseRequestHandler):
             (ip_addr, port, _) = self.server.tor_routers.pop(router_id, None)
             self._output("Deregistering router: %s:%d" % (ip_addr, port))
 
-
     def _create_route(self):
         route = ""
         shuffled_keys = self.server.tor_routers.keys()
