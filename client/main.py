@@ -35,9 +35,8 @@ class TorProxy(BaseHTTPRequestHandler):
     def forward_request(self, method):
         try:
             url = self.headers.dict['host']
-            # self.headers.dict.pop('proxy-connection')
-            headers = str(self.headers).replace("Proxy-", "")
-            path = '/'.join(str(self.path).split("/")[3:])
+            headers = str(self.headers)
+            path = '/'.join(str(self.path).split("/")[3:])  # todo: do this better
             request = "%s /%s %s\r\n%s\r\n" % (method, path, self.protocol_version, headers)
             logging.info("Sending request")
             resp = tor_interface.make_request(url, request)
@@ -109,9 +108,9 @@ class TorClient(object):
             route = self.path_server.get_route()
             if self.test:
                 # print route
-                tr3 = TestTorRouterInterface(route[2], is_exit=True, own_key=rk3, server_pubkey=spk)
-                tr2 = TestTorRouterInterface(route[1], tr3, own_key=rk2, server_pubkey=spk)
-                tor_interface = TestTorRouterInterface(route[0], tr2, is_entry=True, own_key=rk1, server_pubkey=spk)
+                tr3 = TestTorRouterInterface(route[2], is_exit=True, router_key=rk3, server_pubkey=spk)
+                tr2 = TestTorRouterInterface(route[1], tr3, router_key=rk2, server_pubkey=spk)
+                tor_interface = TestTorRouterInterface(route[0], tr2, is_entry=True, router_key=rk1, server_pubkey=spk)
             else:
                 tr3 = TorRouterInterface(route[2])
                 tr2 = TorRouterInterface(route[1], tr3)

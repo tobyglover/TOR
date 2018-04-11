@@ -13,15 +13,6 @@ import sys
 MAX_MSG_LEN = 214 # determined manually for RSA2048 key, padding with PKCS1_OAEP
 KEY_SIZE = 2048
 
-root = logging.getLogger()
-root.setLevel(logging.DEBUG)
-
-ch = logging.StreamHandler(sys.stdout)
-ch.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-ch.setFormatter(formatter)
-root.addHandler(ch)
-
 
 class Crypt(object):
     PUB_DER_LEN = len(RSA.generate(KEY_SIZE).publickey().exportKey('DER'))
@@ -245,5 +236,14 @@ def test_sym():
 
 
 if __name__ == '__main__':
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    ch.setFormatter(formatter)
+    root.addHandler(ch)
+
     # test()
     test_sym()

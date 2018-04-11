@@ -1,6 +1,9 @@
 from Crypt import Crypt, Symmetric
 import logging
 import socket
+from os import urandom
+from Crypto.PublicKey import RSA
+import struct
 
 
 class TorRouterInterface(object):
@@ -121,7 +124,7 @@ class TestTorRouterInterface(object):
     HEADER_SIZE = 2 * CT_BLOCK_SIZE
 
     def __init__(self, (pkt, ip, port, tor_pubkey, sid, symkey), next_router=None,
-                 is_entry=False, is_exit=False, own_key=None, server_pubkey=None):
+                 is_entry=False, is_exit=False, router_key=None, server_pubkey=None):
         self.pkt = pkt
         self.ipp = (ip, port)
         self.tor_pubkey = tor_pubkey
@@ -132,13 +135,12 @@ class TestTorRouterInterface(object):
         self.next_router = next_router
         self.is_entry = is_entry
         self.is_exit = is_exit
-        self.router_key = own_key
+        self.router_key = router_key
         self.client_key = Crypt().generate_key()
-        self.own_key = own_key
         self.server_pubkey = server_pubkey
-        self.local_crypt = Crypt(public_key=own_key.publickey(), private_key=self.client_key)
-        self.router_crypt = Crypt(public_key=self.client_key.publickey(), private_key=self.router_key)
-        self.server_crypt = Crypt(public_key=server_pubkey, private_key=self.router_key)
+        self.local_crypt = Crypt(public_key=router_key.publickey(), private_key=self.client_key, name="local%d" % port, debug=True)
+        self.router_crypt = Crypt(public_key=self.client_key.publickey(), private_key=self.router_key, name="router%d" % port, debug=True)
+        self.server_crypt = Crypt(public_key=server_pubkey, private_key=self.router_key, name="server%d" % port, debug=True)
 
     def _keep_alive(self):
         pass
@@ -146,48 +148,31 @@ class TestTorRouterInterface(object):
     def _handle_establishment(self, payload):
         pkt, (crypt_header, header, body) = payload[:512], Symmetric().unpack_payload(payload[512:])
         data, hash = self.server_crypt.decrypt(pkt)
-        # print "r%d: Decrypting with %s Signing with %s - %s...%s:%s...%s (%dB)" % (self.ipp[1], self.own_key.publickey().exportKey('DER').encode('hex')[70:86],
-        #                                                               self.server_pubkey.exportKey('DER').encode('hex')[70:86],
-        #                                                               pkt.encode('hex')[:16], pkt.encode('hex')[-16:],
-        #                                                               data.encode('hex')[:16], data.encode('hex')[-16:], len(pkt))
         self.server_crypt.auth(data, hash)
 
-        # print self.ipp[1], data.encode('hex')[:16], data.encode('hex')[-16:]
-        # print self.ipp[1], len(payload[len(self.pkt):]), payload[len(self.pkt):].encode('hex')[:16], payload[len(self.pkt):].encode('hex')[-16:]
+        method, rid, self.recv_sid, symkey = data[:4], data[4:20], data[20:28], data[28:44]
 
-        # print "DATA", self.ipp[1], len(data), data.encode('hex')[:16], data.encode('hex')[-16:]
-        method, rid, sid, symkey = data[:4], data[4:20], data[20:28], data[28:44]
-        # print "SYMKEYH", self.ipp[1], symkey.encode('hex')
-        # print "SID   H", self.ipp[1], sid.encode('hex')
-        # print "CRYPTHH", self.ipp[1], crypt_header.encode('hex')
-        # print "Method: " + method
-
-        client_sym = Symmetric(symkey, sid)
+        client_sym = Symmetric(symkey, self.recv_sid)
         client_sym.absorb_crypto_header(crypt_header)
         l, status = client_sym.decrypt_header(header)
         logging.debug("HE - Status: %s, len: %d wanted, %d recvd" % (status, l, len(body)))
 
         body = client_sym.decrypt_body(body)
-        # print body.encode('hex')
-        # payload += sym.encrypt_payload(self.router_key.exportKey("DER") + self.prev_symkey +
-        #                                self.next_symkey + next_payload, "ESTB")
         DER_LEN = Crypt().PUB_DER_LEN
-        self.raw_clientkey, self.recv_prev_symkey, self.recv_next_symkey, next_payload = \
+        raw_clientkey, self.recv_prev_symkey, self.recv_next_symkey, next_payload = \
             body[:DER_LEN], \
             body[DER_LEN:DER_LEN + 16], \
             body[DER_LEN + 16:DER_LEN + 32], \
             body[DER_LEN + 32:]
 
-        print "2", self.ipp[1], self.recv_prev_symkey.encode('hex'), self.recv_next_symkey.encode('hex')
+        self.recv_client_key = RSA.importKey(raw_clientkey)
 
         if self.is_exit:
             response = ''
         else:
             response = self.next_router._handle_establishment(next_payload)
-            print "4", self.ipp[1], self.recv_next_symkey.encode('hex')
             next_sym = Symmetric(self.recv_next_symkey)
             crypt_header, header, body = client_sym.unpack_payload(response)
-            # print response
             next_sym.absorb_crypto_header(crypt_header)
             l, status = next_sym.decrypt_header(header)
             logging.debug("H2 - Status: %s, len: %d wanted, %d recvd" % (status, l, len(body)))
@@ -195,41 +180,31 @@ class TestTorRouterInterface(object):
 
         response = client_sym.encrypt_payload(response, "OKOK")
 
-        print "3", self.ipp[1], self.recv_prev_symkey.encode('hex')
-        ret = Symmetric(self.recv_prev_symkey).encrypt_payload(response, "OKOK")
-        # print Symmetric().unpack_payload(ret)
-        return ret
+        return Symmetric(self.recv_prev_symkey).encrypt_payload(response, "OKOK")
 
     def establish_circuit(self, prev_symkey=None):
-        # print "SYMKEYE", self.ipp[1], self.client_symkey.encode('hex')
-        # print "SID   E", self.ipp[1], self.sid.encode('hex')
         sym = Symmetric(self.client_symkey, self.sid)
         self.prev_symkey = prev_symkey or self.client_symkey
 
         if self.is_exit:
             payload = self.pkt
             payload += sym.encrypt_payload(self.client_key.publickey().exportKey("DER") + prev_symkey, "EXIT")
-            # print self.ipp[1], len(payload[len(self.pkt):]), payload[len(self.pkt):].encode('hex')[:16], payload[len(self.pkt):].encode('hex')[-16:]
         else:
             payload = self.pkt
 
             self.next_symkey = sym.generate()
             next_payload = self.next_router.establish_circuit(self.next_symkey)
-            print "1", self.ipp[1], self.prev_symkey.encode('hex'), self.next_symkey.encode('hex')
             payload += sym.encrypt_payload(self.client_key.publickey().exportKey("DER") + self.prev_symkey +
                                            self.next_symkey + next_payload, "ESTB")
-            # print self.ipp[1], len(payload[len(self.pkt):]), payload[len(self.pkt):].encode('hex')[:16], payload[len(self.pkt):].encode('hex')[-16:]
-
-        # print "CRYPTHE", self.ipp[1], payload[len(self.pkt):len(self.pkt) + 80].encode('hex')
 
         if not self.is_entry:
             return payload
 
         response = self._handle_establishment(payload)
-        resp_sym = Symmetric(self.client_symkey)
+        self.resp_symkey = self.client_symkey
+        resp_sym = Symmetric(self.resp_symkey)
         crypt_header, header, body = resp_sym.unpack_payload(response)
 
-        print "5", self.ipp[1], self.client_symkey.encode('hex')
         resp_sym.absorb_crypto_header(crypt_header)
         l, status = resp_sym.decrypt_header(header)
         logging.debug("EC - Status: %s, len: %d wanted, %d recvd" % (status, l, len(body)))
@@ -249,8 +224,98 @@ class TestTorRouterInterface(object):
             return body
         return self.next_router.peel_onion(body)
 
+    def _handle_request(self, payload):
+        pkt, (crypt_header, header, body) = payload[:512], Symmetric().unpack_payload(payload[512:])
+        data, hash = self.router_crypt.decrypt(pkt)
+        self.router_crypt.auth(data, hash)
+
+        method, sid, symkey = data[:4], data[4:12], data[12:]
+        assert sid == self.recv_sid
+
+        client_sym = Symmetric(symkey, sid)
+        client_sym.absorb_crypto_header(crypt_header)
+        l, status = client_sym.decrypt_header(header)
+        logging.debug("HR - Status: %s, len: %d wanted, %d recvd" % (status, l, len(body)))
+
+        body = client_sym.decrypt_body(body)
+
+        if self.is_exit:
+            ip_raw, port, request = struct.unpack("!4sI%ds" % (len(body) - 8), body)
+            ip = socket.inet_ntoa(ip_raw)
+            s = socket.socket()
+            s.connect((ip, port))
+            s.sendall(request)
+            s.settimeout(1)
+            chunk = "asdf"
+            payload = ""
+            need_data = True
+            while len(chunk) > 0 or need_data:
+                try:
+                    chunk = s.recv(1024)
+                except socket.timeout:
+                    chunk = ''
+                logging.debug("Received chunk from website (%dB)" % len(chunk))
+                payload += chunk
+                if len(chunk) > 0:
+                    need_data = False
+
+            return_sym = Symmetric(self.recv_prev_symkey)
+            payload = client_sym.encrypt_payload(payload, "OKOK")
+            return return_sym.encrypt_payload(payload, "OKOK")
+
+        response = self.next_router._handle_request(body)
+
+        next_sym = Symmetric(self.recv_next_symkey)
+        crypt_header, header, body = client_sym.unpack_payload(response)
+        # print response
+        next_sym.absorb_crypto_header(crypt_header)
+        l, status = next_sym.decrypt_header(header)
+        logging.debug("HR - Status: %s, len: %d wanted, %d recvd" % (status, l, len(body)))
+        response = next_sym.decrypt_body(body)
+
+        response = client_sym.encrypt_payload(response, "OKOK")
+
+        ret = Symmetric(self.recv_prev_symkey).encrypt_payload(response, "OKOK")
+        return ret
+
     def make_request(self, url, request):
-        pass
+        url_port = url.split(":")
+        ip = socket.gethostbyname(url_port[0])
+        port = int(url_port[1]) if len(url_port) == 2 else 80
+
+        logging.info("Requesting %s:%d" % (ip, port))
+
+        # generate new client symkey
+        self.client_symkey = urandom(16)
+        client_sym = Symmetric(self.client_symkey, self.sid)
+
+        if self.is_exit:
+            payload = self.local_crypt.sign_and_encrypt("CLNT" + self.sid + self.client_symkey)
+            port_bs = struct.pack("!I", port)
+            payload += client_sym.encrypt_payload(socket.inet_aton(ip) + port_bs + request, "SEND")
+        else:
+            payload = self.local_crypt.sign_and_encrypt("CLNT" + self.sid + self.client_symkey)
+            # print payload.encode("hex")[16:32]
+            next_request = self.next_router.make_request(url, request)
+            # print self.ipp[1], len(payload)
+            # print ("CLNT" + self.sid + self.client_symkey).encode('hex')
+            payload += client_sym.encrypt_payload(next_request, "SEND")
+
+        if not self.is_entry:
+            return payload
+
+        logging.info("Sending packet")
+        response = self._handle_request(payload)
+        resp_sym = Symmetric(self.resp_symkey)
+        crypt_header, header, body = resp_sym.unpack_payload(response)
+
+        # print "5", self.ipp[1], self.client_symkey.encode('hex')
+        resp_sym.absorb_crypto_header(crypt_header)
+        l, status = resp_sym.decrypt_header(header)
+        logging.debug("MR - Status: %s, len: %d wanted, %d recvd" % (status, l, len(body)))
+        body = resp_sym.decrypt_body(body)
+
+        return self.peel_onion(body)
 
     def close_circuit(self):
         pass
