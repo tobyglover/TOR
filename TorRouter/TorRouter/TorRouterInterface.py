@@ -6,24 +6,60 @@ from Crypto.PublicKey import RSA
 import struct
 
 
+class CircuitFailed(Exception):
+    pass
+
+
 class TorRouterInterface(object):
 
     CT_BLOCK_SIZE = 256
     HEADER_SIZE = 2 * CT_BLOCK_SIZE
 
-    def __init__(self, (ip, port, tor_pubkey), next_router=None, entry=False):
-        client_key = Crypt().generate_key()
-        self.client_pubkey = client_key.publickey()
-        self.tor_pubkey = tor_pubkey
-        self.crypt = Crypt(public_key=tor_pubkey,
-                           private_key=client_key)
-        self.prev_pubkey_der = None
+    def __init__(self, (pkt, ip, port, router_pubkey, sid, symkey), next_router=None, is_entry=False):
+        """TorRouterInterface
+
+        Interface to Tor Router circuit
+
+        Args:
+            (pkt (str), ip (str), port (int), router_pubkey (RSA key), symkey (str)):
+                Router information returned by TorPathingServer interface
+            next_router (TorRouterInterface - optional):
+                Next Tor router to wrap/peel onion. Must include unless router is exit node
+            is_entry (bool - optional): Set to True if router is entry node
+        """
+        self.pkt = pkt
+        self.ipp = (ip, port)
+        self.router_pubkey = router_pubkey
+        self.sid = sid
+
+        self.client_symkey = symkey
+        self.resp_symkey = symkey
+        self.next_symkey = None
+        self.prev_symkey = None
+
         self.next_router = next_router
-        self.entry = entry
-        self.ip = ip
-        self.port = port
-        self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        logging.info("Initialized TorRouterInterface")
+        self.s = socket.socket()
+
+        self.is_entry = is_entry
+        self.is_exit = False if next_router else True
+
+        self.client_key = Crypt().generate_key()
+        self.crypt = Crypt(public_key=router_pubkey, private_key=self.client_key, name="interface%d" % port,
+                           debug=True)
+        self.client_sym = Symmetric(self.client_symkey)
+        self.resp_sym = Symmetric(self.resp_symkey)
+
+    def _keep_alive(self):
+        pass # TODO: add keep alive
+
+    def _connect(self):
+        self.s = socket.socket()
+        self.s.connect(self.ipp)
+
+    def _send(self, payload):
+        logging.info("Sending packet")
+        self._connect()
+        self.s.sendall(payload)
 
     def _pull(self, length):
         message = ''
@@ -31,91 +67,125 @@ class TorRouterInterface(object):
             message += self.s.recv(length - len(message))
         return message
 
-    def establish_circuit(self, prev_pubkey=None):
-        logging.info("Establishing circuit")
-        if self.entry:
-            self.prev_pubkey_der = self.client_pubkey.exportKey(format='DER')
-        else:
-            self.prev_pubkey_der = prev_pubkey.exportKey(format='DER')
+    def _recv(self):
+        headers = self._pull(self.client_sym.CRYPT_HEADER_LEN + self.client_sym.HEADER_LEN)
+        crypt_header, header, _ = self.resp_sym.unpack_payload(headers)
 
-        pubkey = self.client_pubkey.exportKey(format='DER')
-
-        packet = self.prev_pubkey_der
-        if self.next_router:
-            packet += self.next_router.tor_pubkey.exportKey(format='DER')
-            packet += self.next_router.establish_circuit(prev_pubkey=self.tor_pubkey)
-            packet = self.crypt.sign_and_encrypt(packet)
-            header = "%d:%s:%d" % (len(packet) / self.CT_BLOCK_SIZE,
-                                   self.next_router.ip, self.next_router.port)
-            header = self.crypt.sign_and_encrypt(header)
-        else:
-            packet = self.crypt.sign_and_encrypt(packet)
-            header = "%d:EXIT:" % (len(packet) / self.CT_BLOCK_SIZE)
-            header = self.crypt.sign_and_encrypt(header)
-
-        logging.debug("ppd: %d, h: %d, p: %d" % (len(self.prev_pubkey_der), len(header), len(packet)))
-        packet = pubkey + header + packet
-
-        if self.entry:
-            self.s.connect((self.ip, self.port))
-            logging.info("Entry TRI sending packet of len %d" % len(packet))
-            self.s.sendall(packet)
-        else:
-            logging.info("Later TRI returning packet of len %d" % len(packet))
-            return packet
+        self.resp_sym.absorb_crypto_header(crypt_header)
+        l, status = self.resp_sym.decrypt_header(header)
+        return self.resp_sym.decrypt_body(self._pull(l))
 
     def peel_onion(self, onion):
-        if self.next_router:
-            onion = self.crypt.decrypt_and_auth(onion)
-            return self.next_router.peel_onion(onion)
-        return self.crypt.decrypt_and_auth(onion)
+        crypt_header, header, body = self.client_sym.unpack_payload(onion)
+        self.client_sym.absorb_crypto_header(crypt_header)
+        l, status = self.client_sym.decrypt_header(header)
+
+        if status != "OKOK":
+            raise CircuitFailed
+
+        logging.debug("PO - Status: %s, len: %d wanted, %d recvd" % (status, l, len(body)))
+        body = self.client_sym.decrypt_body(body)
+
+        if self.is_exit:
+            return body
+        return self.next_router.peel_onion(body)
+
+    def establish_circuit(self, prev_symkey=None):
+        """establish_circuit
+
+        Establishes a Tor circuit
+
+        Args:
+            prev_symkey (str - optional): symkey of last Tor router - do not set externally
+
+        Raises:
+            CircuitFailed: If connection to circuit failed
+        """
+        self.prev_symkey = prev_symkey or self.client_symkey
+
+        payload = self.pkt
+        if self.is_exit:
+            header = self.client_key.publickey().exportKey("DER") + prev_symkey
+            payload += self.client_sym.encrypt_payload(header, "EXIT")
+        else:
+            self.next_symkey = self.client_sym.generate()
+            next_payload = self.next_router.establish_circuit(self.next_symkey)
+            header = self.client_key.publickey().exportKey("DER") + self.prev_symkey + self.next_symkey + next_payload
+            payload += self.client_sym.encrypt_payload(header, "ESTB")
+
+        if not self.is_entry:
+            return payload
+
+        self._send(payload)
+        response = self._recv()
+        self.peel_onion(response)
 
     def make_request(self, url, request):
+        """make_request
+
+        Sends a request to a target url through the Tor network and returns the response
+
+        Args:
+            url (str): Top level URL of target server formatted as "IP:PORT"
+            request (str): Body of request to target server
+
+        Returns:
+            (str): Plaintext response from server
+
+        Raises:
+            CircuitFailed: If connection to circuit failed
+        """
+
         url_port = url.split(":")
         ip = socket.gethostbyname(url_port[0])
         port = int(url_port[1]) if len(url_port) == 2 else 80
 
+        # generate new client symkey
+        self.client_symkey = urandom(16)
+        self.client_sym = Symmetric(self.client_symkey, self.sid)
+
+        payload = self.crypt.sign_and_encrypt("CLNT" + self.sid + self.client_symkey)
+        if self.is_exit:
+            port_bs = struct.pack("!I", port)
+            payload += self.client_sym.encrypt_payload(socket.inet_aton(ip) + port_bs + request, "SEND")
+        else:
+            next_request = self.next_router.make_request(url, request)
+            payload += self.client_sym.encrypt_payload(next_request, "SEND")
+
+        if not self.is_entry:
+            return payload
+
         logging.info("Requesting %s:%d" % (ip, port))
-
-        if self.next_router:
-            packet = self.next_router.make_request(url, request)
-            packet = self.crypt.sign_and_encrypt(packet)
-            header = "%d:" % (len(packet) / self.CT_BLOCK_SIZE)
-            packet = self.crypt.sign_and_encrypt(header) + packet
-        else:
-            packet = self.crypt.sign_and_encrypt(request)
-            header = "%d:%s:%d" % (len(packet) / self.CT_BLOCK_SIZE, ip, port)
-            packet = self.crypt.sign_and_encrypt(header) + packet
-
-        if self.entry:
-            logging.info("Sending packet")
-            self.s.sendall(packet)
-        else:
-            return packet
-
-        logging.info("Waiting for response...")
-        header = self._pull(self.HEADER_SIZE)
-        num_chunks = int(self.crypt.decrypt_and_auth(header))
-
-        onion = self._pull(num_chunks * self.CT_BLOCK_SIZE)
-        logging.info("Received response")
-        return self.peel_onion(onion)
+        self._send(payload)
+        response = self._recv()
+        return self.peel_onion(response)
 
     def close_circuit(self):
-        if self.next_router:
-            packet = self.next_router.close_circuit()
-            packet = self.crypt.sign_and_encrypt(packet)
-            header = "%d:CLOSE" % (len(packet) / self.CT_BLOCK_SIZE)
-            packet = self.crypt.sign_and_encrypt(header) + packet
-        else:
-            packet = "0:CLOSE:"
-            packet = self.crypt.sign_and_encrypt(packet)
+        """close_circuit
 
-        if self.entry:
-            logging.info("Closing circuit")
-            self.s.sendall(packet)
+        Closes the established Tor circuit - must do before exiting
+
+        Raises:
+            CircuitFailed: If connection to circuit failed
+        """
+        # generate new client symkey
+        self.client_symkey = urandom(16)
+        client_sym = Symmetric(self.client_symkey, self.sid)
+
+        payload = self.crypt.sign_and_encrypt("CLNT" + self.sid + self.client_symkey)
+        if self.is_exit:
+            payload += client_sym.encrypt_payload("", "EXIT")
         else:
-            return packet
+            next_request = self.next_router.close_circuit()
+            payload += client_sym.encrypt_payload(next_request, "EXIT")
+
+        if not self.is_entry:
+            return payload
+
+        logging.info("Sending packet")
+        self._send(payload)
+        response = self._recv()
+        self.peel_onion(response)
 
 
 class TestTorRouterInterface(object):
@@ -138,17 +208,20 @@ class TestTorRouterInterface(object):
         self.router_key = router_key
         self.client_key = Crypt().generate_key()
         self.server_pubkey = server_pubkey
-        self.local_crypt = Crypt(public_key=router_key.publickey(), private_key=self.client_key, name="local%d" % port, debug=True)
-        self.router_crypt = Crypt(public_key=self.client_key.publickey(), private_key=self.router_key, name="router%d" % port, debug=True)
-        self.server_crypt = Crypt(public_key=server_pubkey, private_key=self.router_key, name="server%d" % port, debug=True)
+        self.local_crypt = Crypt(public_key=router_key.publickey(), private_key=self.client_key,
+                                 name="local%d" % port, debug=True)
+        self.router_crypt = Crypt(public_key=self.client_key.publickey(), private_key=self.router_key,
+                                  name="router%d" % port, debug=True)
+        self.server_crypt = Crypt(public_key=server_pubkey, private_key=self.router_key,
+                                  name="server%d" % port, debug=True)
 
     def _keep_alive(self):
         pass
 
     def _handle_establishment(self, payload):
         pkt, (crypt_header, header, body) = payload[:512], Symmetric().unpack_payload(payload[512:])
-        data, hash = self.server_crypt.decrypt(pkt)
-        self.server_crypt.auth(data, hash)
+        data, hsh = self.server_crypt.decrypt(pkt)
+        self.server_crypt.auth(data, hsh)
 
         method, rid, self.recv_sid, symkey = data[:4], data[4:20], data[20:28], data[28:44]
 
@@ -158,12 +231,12 @@ class TestTorRouterInterface(object):
         logging.debug("HE - Status: %s, len: %d wanted, %d recvd" % (status, l, len(body)))
 
         body = client_sym.decrypt_body(body)
-        DER_LEN = Crypt().PUB_DER_LEN
+        der_len = Crypt().PUB_DER_LEN
         raw_clientkey, self.recv_prev_symkey, self.recv_next_symkey, next_payload = \
-            body[:DER_LEN], \
-            body[DER_LEN:DER_LEN + 16], \
-            body[DER_LEN + 16:DER_LEN + 32], \
-            body[DER_LEN + 32:]
+            body[:der_len], \
+            body[der_len:der_len + 16], \
+            body[der_len + 16:der_len + 32], \
+            body[der_len + 32:]
 
         self.recv_client_key = RSA.importKey(raw_clientkey)
 

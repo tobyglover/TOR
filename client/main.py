@@ -4,7 +4,7 @@ import logging
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 import sys
 from TorPathingServer import TORPathingServer, PathingFailed, TestTORPathingServer
-from TorRouter import TorRouterInterface, TestTorRouterInterface
+from TorRouter import TorRouterInterface, TestTorRouterInterface, CircuitFailed
 from Crypt import Crypt
 
 root = logging.getLogger()
@@ -134,18 +134,29 @@ class TorClient(object):
         global tor_interface
         while True:
             try:
-                logging.info("Establishing path")
+                logging.info("Establishing new path")
                 self.establish_path()
                 logging.info("Starting server")
                 self.tp.serve_forever()
             except PathingFailed:
-                print "Pathing failed: try again later"
+                logging.error("Pathing failed: try again later")
                 return
+            except CircuitFailed:
+                logging.error("Circuit failed!")
+                try:
+                    tor_interface.close_circuit()
+                except CircuitFailed:
+                    logging.error("Closing circuit failed! Network may be corrupted")
+                    return
             except:
                 logging.info("Closing circuit...")
-                tor_interface.close_circuit()
+                try:
+                    tor_interface.close_circuit()
+                except CircuitFailed:
+                    logging.error("Closing circuit failed! Network may be corrupted")
+                    return
                 logging.info("Exiting")
-                break
+                return
 
 
 def main():
