@@ -32,14 +32,26 @@ tor_interface = None
 
 class TorProxy(BaseHTTPRequestHandler):
 
-    def forward_request(self, method):
+    def clean_url(self, url):
+        if "://" in url:
+            return url.split('/')[2]
+        return url.split('/')[0]
+
+    def forward_request(self):
         try:
-            url = self.headers.dict['host']
-            headers = str(self.headers)
-            path = '/'.join(str(self.path).split("/")[3:])  # todo: do this better
-            request = "%s /%s %s\r\n%s\r\n" % (method, path, self.protocol_version, headers)
+            _, url, _ = self.raw_requestline.split(' ')
+            url = self.clean_url(url)
+            # print "*" * 20, url, self.raw_requestline
+            # print "getting host"
+            # print self.headers.dict
+            # print self.raw_requestline
+            # url = self.headers.dict['host']
+            # print url
+            # headers = str(self.headers)
+            # path = '/'.join(str(self.path).split("/")[3:])  # todo: do this better
+            # request = "%s /%s %s\r\n%s\r\n" % (method, path, self.protocol_version, headers)
             logging.info("Sending request")
-            resp = tor_interface.make_request(url, request)
+            resp = tor_interface.make_request(url, self.raw_requestline + str(self.headers) + "\r\n")
             logging.info("Returning request...")
             self.wfile.write(resp)
             logging.info("Served client")
@@ -49,35 +61,35 @@ class TorProxy(BaseHTTPRequestHandler):
 
     def do_CONNECT(self):
         logging.info("Handling CONNECT")
-        self.forward_request("CONNECT")
+        self.forward_request()
 
     def do_DELETE(self):
         logging.info("Handling DELETE")
-        self.forward_request("DELETE")
+        self.forward_request()
 
     def do_GET(self):
         logging.info("Handling GET")
-        self.forward_request("GET")
+        self.forward_request()
 
     def do_HEAD(self):
         logging.info("Handling HEAD")
-        self.forward_request("HEAD")
+        self.forward_request()
 
     def do_OPTIONS(self):
         logging.info("Handling OPTIONS")
-        self.forward_request("OPTIONS")
+        self.forward_request()
 
     def do_PATCH(self):
         logging.info("Handling PATCH")
-        self.forward_request("PATCH")
+        self.forward_request()
 
     def do_POST(self):
         logging.info("Handling POST")
-        self.forward_request("POST")
+        self.forward_request()
 
     def do_PUT(self):
         logging.info("Handling PUT")
-        self.forward_request("PUT")
+        self.forward_request()
 
 
 class TorClient(object):
@@ -129,11 +141,11 @@ class TorClient(object):
             except PathingFailed:
                 print "Pathing failed: try again later"
                 return
-            # except:
-            #     logging.info("Closing circuit...")
-            #     tor_interface.close_circuit()
-            #     logging.info("Exiting")
-            #     break
+            except:
+                logging.info("Closing circuit...")
+                tor_interface.close_circuit()
+                logging.info("Exiting")
+                break
 
 
 def main():

@@ -254,6 +254,9 @@ class TestTorRouterInterface(object):
                     chunk = s.recv(1024)
                 except socket.timeout:
                     chunk = ''
+                except socket.error:
+                    payload += chunk
+                    break
                 logging.debug("Received chunk from website (%dB)" % len(chunk))
                 payload += chunk
                 if len(chunk) > 0:
@@ -317,5 +320,63 @@ class TestTorRouterInterface(object):
 
         return self.peel_onion(body)
 
+    def _handle_close(self, payload):
+        pkt, (crypt_header, header, body) = payload[:512], Symmetric().unpack_payload(payload[512:])
+        data, hash = self.router_crypt.decrypt(pkt)
+        self.router_crypt.auth(data, hash)
+
+        method, sid, symkey = data[:4], data[4:12], data[12:]
+        assert sid == self.recv_sid
+
+        client_sym = Symmetric(symkey, sid)
+        client_sym.absorb_crypto_header(crypt_header)
+        l, status = client_sym.decrypt_header(header)
+        logging.debug("HC - Status: %s, len: %d wanted, %d recvd" % (status, l, len(body)))
+
+        body = client_sym.decrypt_body(body)
+
+        if self.is_exit:
+            return_sym = Symmetric(self.recv_prev_symkey)
+            payload = client_sym.encrypt_payload("", "EXIT")
+            return return_sym.encrypt_payload(payload, "EXIT")
+
+        response = self.next_router._handle_close(body)
+
+        next_sym = Symmetric(self.recv_next_symkey)
+        crypt_header, header, body = client_sym.unpack_payload(response)
+        next_sym.absorb_crypto_header(crypt_header)
+        l, status = next_sym.decrypt_header(header)
+        logging.debug("HR - Status: %s, len: %d wanted, %d recvd" % (status, l, len(body)))
+        response = next_sym.decrypt_body(body)
+
+        response = client_sym.encrypt_payload(response, "EXIT")
+        return Symmetric(self.recv_prev_symkey).encrypt_payload(response, "EXIT")
+
     def close_circuit(self):
-        pass
+        # generate new client symkey
+        self.client_symkey = urandom(16)
+        client_sym = Symmetric(self.client_symkey, self.sid)
+
+        if self.is_exit:
+            payload = self.local_crypt.sign_and_encrypt("CLNT" + self.sid + self.client_symkey)
+            payload += client_sym.encrypt_payload("", "EXIT")
+        else:
+            payload = self.local_crypt.sign_and_encrypt("CLNT" + self.sid + self.client_symkey)
+            next_request = self.next_router.close_circuit()
+            payload += client_sym.encrypt_payload(next_request, "EXIT")
+
+        if not self.is_entry:
+            return payload
+
+        logging.info("Sending packet")
+        response = self._handle_close(payload)
+        resp_sym = Symmetric(self.resp_symkey)
+        crypt_header, header, body = resp_sym.unpack_payload(response)
+
+        # print "5", self.ipp[1], self.client_symkey.encode('hex')
+        resp_sym.absorb_crypto_header(crypt_header)
+        l, status = resp_sym.decrypt_header(header)
+        logging.debug("CC - Status: %s, len: %d wanted, %d recvd" % (status, l, len(body)))
+        body = resp_sym.decrypt_body(body)
+
+        return self.peel_onion(body)
