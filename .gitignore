@@ -105,3 +105,4 @@ ENV/
 *.pem
 .DS_store
 .log
+nohup.out

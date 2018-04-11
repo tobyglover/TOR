@@ -13,6 +13,7 @@ TODO:
  - Passing error messages on exit node & IP lookup
  - Adding .onion DNS server
  - Double check URL parsing
+ - Failing client request if <3 servers
 
 
 DONE:
