@@ -106,3 +106,4 @@ ENV/
 .DS_store
 .log
 nohup.out
+*.db
