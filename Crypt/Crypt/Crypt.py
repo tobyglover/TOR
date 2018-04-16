@@ -1,9 +1,8 @@
 from Crypto.PublicKey import RSA
 from Crypto.Signature import pss
 from Crypto.Hash import SHA256
-from Crypto.Cipher import PKCS1_OAEP
+from Crypto.Cipher import PKCS1_OAEP, AES, ChaCha20
 from Crypto.Protocol.KDF import PBKDF2
-from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 from os import urandom
 import struct
@@ -37,36 +36,31 @@ class Crypt(object):
         self._public_key = publicKey
 
     def sign_and_encrypt(self, data):
-        cipher = PKCS1_OAEP.new(self._public_key)
+        cipher_rsa = PKCS1_OAEP.new(self._public_key)
         self.log("Signing with own key %s" % self._private_key.publickey().exportKey(format="DER").encode('hex')[66:74])
         self.log("Encrypting with %s's key %s" % (self._name, self._public_key.exportKey(format="DER").encode('hex')[66:74]))
         signature = pss.new(self._private_key).sign(SHA256.new(data))
         # print signature.encode('hex')[:16], signature.encode('hex')[-16:], data.encode('hex')[:16], data.encode('hex')[-16:]
         data = signature + data
 
-        message = ""
-        i = 0
-        while i * MAX_MSG_LEN < len(data):
-            message += cipher.encrypt(data[i * MAX_MSG_LEN : (i + 1) * MAX_MSG_LEN])
-            i += 1
+        session_key = get_random_bytes(16)
+        iv = get_random_bytes(16)
 
-        return message
+        cipher_aes = AES.new(session_key, AES.MODE_CFB, iv=iv)
+        message = cipher_aes.encrypt(data)
+
+        return cipher_rsa.encrypt(session_key + iv) + message
 
     def decrypt(self, message):
         self.log("Checking signature with %s's key %s" % (self._name, self._public_key.exportKey(format="DER").encode('hex')[66:74]))
         self.log("Decrypting with own key %s" % self._private_key.publickey().exportKey(format="DER").encode('hex')[66:74])
 
-        cipher = PKCS1_OAEP.new(self._private_key)
-        chunk_size = KEY_SIZE / 8
-        data = ""
-        i = 0
+        cipher_rsa = PKCS1_OAEP.new(self._private_key)
+        aes_data = cipher_rsa.decrypt(message[:256])
+        cipher_aes = AES.new(aes_data[:16], AES.MODE_CFB, iv=aes_data[16:])
 
-        while chunk_size * i < len(message):
-            chunk = message[i * chunk_size : (i + 1) * chunk_size]
-            data += cipher.decrypt(chunk)
-            i += 1
+        data = cipher_aes.decrypt(message[256:])
 
-        # print data[:256].encode('hex')[:16], data[:256].encode('hex')[-16:], data[256:].encode('hex')[:16], data[256:].encode('hex')[-16:]
         return data[256:], data[:256]
 
     def auth(self, data, hash):
@@ -245,5 +239,5 @@ if __name__ == '__main__':
     ch.setFormatter(formatter)
     root.addHandler(ch)
 
-    # test()
-    test_sym()
+    test()
+    # test_sym()
