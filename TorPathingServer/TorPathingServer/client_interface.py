@@ -7,8 +7,7 @@ from random import shuffle
 from os import urandom
 import struct
 
-ROUTE_INFO_SIZE = DER_KEY_SIZE + 8
-
+ROUTE_INFO_SIZE = struct.calcsize(ROUTE_STRUCT_FMT)
 
 class PathingFailed(Exception):
     pass
@@ -70,8 +69,10 @@ class TORPathingServer(object):
         return Connection(self._server_ip, self._server_port, self._private_key)
 
     def _parse_route_node(self, data):
-        (ip, port, pub_key) = struct.unpack("!4sI%ds" % DER_KEY_SIZE, data)
-        return (socket.inet_ntoa(ip), port, RSA.import_key(pub_key))
+        enc_pkt, ip, port, pk, sid, sym_key = struct.unpack(ROUTE_STRUCT_FMT, data)
+        ip = socket.inet_ntoa(ip)
+        pk = RSA.import_key(pk)
+        return (enc_pkt, ip, port, pk, sid, sym_key)
 
     """
     Registers a new TOR router with the pathing server
@@ -113,8 +114,7 @@ class TORPathingServer(object):
     def get_route(self):
         conn = self._newconnection()
         conn.send(struct.pack("!c", MSG_TYPES.GET_ROUTE))
-        route_data = conn.receive(2048)
-
+        route_data = conn.receive(4096)
         i = 0
         route = []
         while (i + 1) * ROUTE_INFO_SIZE <= len(route_data):

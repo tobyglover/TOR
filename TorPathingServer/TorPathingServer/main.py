@@ -7,6 +7,7 @@ import socket
 from SocketServer import TCPServer, BaseRequestHandler
 from Crypt import Crypt
 from Crypto.PublicKey import RSA
+from Crypto.Random import get_random_bytes
 
 MAX_PATH_LENGTH = 3
 
@@ -25,6 +26,7 @@ class CustomTCPServer(TCPServer, object):
         self.private_key = self._getPrivateKey()
         self.tor_routers = {}
         self._connections = 0
+        self.rid = get_random_bytes(16)
 
     def _getPrivateKey(self):
         with open('private.pem','r') as f:
@@ -43,7 +45,8 @@ class TCPHandler(BaseRequestHandler):
         print "id%d: %s" % (self._id, message)
 
     def _send(self, message):
-        self.request.sendall(self._crypt.sign_and_encrypt(message))
+        data = self._crypt.sign_and_encrypt(message)
+        self.request.sendall(data)
 
     def _register_router(self, request):
         (port, private_key) = struct.unpack("!I%ds" % DER_KEY_SIZE, request)
@@ -65,7 +68,11 @@ class TCPHandler(BaseRequestHandler):
 
         for i in range(min(len(shuffled_keys), MAX_PATH_LENGTH)):
             (ip_addr, port, pub_key) = self.server.tor_routers[shuffled_keys[i]]
-            route += socket.inet_aton(ip_addr) + struct.pack("!I%ds" % DER_KEY_SIZE, port, pub_key)
+            c = Crypt(public_key=RSA.import_key(pub_key), private_key=self.server.private_key)
+            sid = get_random_bytes(8)
+            sym_key = get_random_bytes(16)
+            enc_pkt = c.sign_and_encrypt("ESTB" + self.server.rid + sid + sym_key)
+            route += struct.pack(ROUTE_STRUCT_FMT, enc_pkt, socket.inet_aton(ip_addr), port, pub_key, sid, sym_key)
 
         self._send(route)
 

@@ -17,7 +17,8 @@ def test():
 
     route = getServer().get_route()
     count_correct = 0
-    for (_, port, key) in route:
+
+    for (_, _, port, key, _, _) in route:
         for (router_port, router_key) in router_config:
             if port == router_port and key == router_key.publickey():
                 count_correct += 1
