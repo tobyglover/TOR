@@ -22,9 +22,13 @@ class CustomTCPServer(TCPServer, object):
         super(CustomTCPServer, self).__init__(server_address, request_handler)
         self.timeout = 3
         self.request_queue_size = 10
-        self.private_key = Crypt().generate_key()
+        self.private_key = self._getPrivateKey()
         self.tor_routers = {}
         self._connections = 0
+
+    def _getPrivateKey(self):
+        with open('private.pem','r') as f:
+            return RSA.import_key(f.read())
 
     def getUniqueConnectionId(self):
         i = self._connections
@@ -72,7 +76,6 @@ class TCPHandler(BaseRequestHandler):
     def handle(self):
         self._output("Establishing connection with with %s, port %s" % self.client_address, indent=False)
         request = self.request.recv(DER_KEY_SIZE)
-        self.request.sendall(self.server.private_key.publickey().exportKey(format='DER'))
         self._crypt.setPublicKey(RSA.import_key(request))
 
         while True:
