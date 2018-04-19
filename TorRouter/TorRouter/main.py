@@ -178,7 +178,7 @@ if __name__ == "__main__":
 
     _, port = server.server_address
     logging.info("Registering self...")
-    pathing_server.register(port, server.key.publickey())
+    pathing_server.register(port, server.key)
     logging.info("Registered")
     try:
         logging.info("Starting server...")

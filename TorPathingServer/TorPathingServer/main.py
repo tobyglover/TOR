@@ -49,17 +49,24 @@ class TCPHandler(BaseRequestHandler):
         self.request.sendall(data)
 
     def _register_router(self, request):
-        (port, private_key) = struct.unpack("!I%ds" % DER_KEY_SIZE, request)
+        (port, pub_key) = struct.unpack("!I%ds" % DER_KEY_SIZE, request)
         self._output("Registering new router: %s:%d" % (self.client_address[0], port))
-        router_id = uuid.uuid4()
-        self.server.tor_routers[router_id] = (self.client_address[0], port, private_key)
-        self._send(router_id.bytes)
+        router_id = uuid.uuid4().bytes
+        self.server.tor_routers[router_id] = {"ip_addr": self.client_address[0],
+                                              "port": port,
+                                              "pub_key": pub_key}
+        self._send(router_id)
+
+    def _register_daemon(self, request):
+        (router_id, daemon_port) = struct.unpack("!%dsI" % ROUTER_ID_SIZE, request)
+        if router_id in self.server.tor_routers:
+            self.server.tor_routers[router_id]["daemon_port"] = daemon_port
 
     def _unregister_router(self, request):
-        router_id = uuid.UUID(bytes=request)
-        if router_id in self.server.tor_routers and self.server.tor_routers[router_id][0] == self.client_address[0]:
-            (ip_addr, port, _) = self.server.tor_routers.pop(router_id, None)
-            self._output("Deregistering router: %s:%d" % (ip_addr, port))
+        router_id = request[:ROUTER_ID_SIZE]
+        if router_id in self.server.tor_routers and self.server.tor_routers[router_id]["ip_addr"] == self.client_address[0]:
+            details = self.server.tor_routers.pop(router_id, None)
+            self._output("Deregistering router: %s:%d" % (details["ip_addr"], details["port"]))
 
     def _create_route(self):
         route = ""
@@ -67,12 +74,12 @@ class TCPHandler(BaseRequestHandler):
         shuffle(shuffled_keys)
 
         for i in range(min(len(shuffled_keys), MAX_PATH_LENGTH)):
-            (ip_addr, port, pub_key) = self.server.tor_routers[shuffled_keys[i]]
-            c = Crypt(public_key=RSA.import_key(pub_key), private_key=self.server.private_key)
+            details = self.server.tor_routers[shuffled_keys[i]]
+            c = Crypt(public_key=RSA.import_key(details["pub_key"]), private_key=self.server.private_key)
             sid = get_random_bytes(8)
             sym_key = get_random_bytes(16)
             enc_pkt = c.sign_and_encrypt("ESTB" + self.server.rid + sid + sym_key)
-            route += struct.pack(ROUTE_STRUCT_FMT, enc_pkt, socket.inet_aton(ip_addr), port, pub_key, sid, sym_key)
+            route += struct.pack(ROUTE_STRUCT_FMT, enc_pkt, socket.inet_aton(details["ip_addr"]), details["port"], details["pub_key"], sid, sym_key)
 
         self._send(route)
 
@@ -104,6 +111,9 @@ class TCPHandler(BaseRequestHandler):
             elif request_type == MSG_TYPES.GET_ROUTE:
                 self._output("Creating route")
                 self._create_route()
+            elif request_type == MSG_TYPES.REGISTER_DAEMON:
+                self._output("Registering daemon for router")
+                self._register_daemon(request)
             elif request_type == MSG_TYPES.CLOSE:
                 self._output("Client exiting connection")
                 return
