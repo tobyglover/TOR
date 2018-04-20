@@ -13,30 +13,38 @@ from TorPathingServer import TORPathingServer
 from Crypt import Crypt
 import logging
 import sys
+from CircuitDatabase import CircuitDatabase, CircuitNotFound, BadMethod
+from Circuit import PFCircuit, ClientCircuit
 
-root = logging.getLogger()
-root.setLevel(logging.DEBUG)
+logger = logging.getLogger("TorRouter")
+logger.setLevel(logging.DEBUG)
 
 ch = logging.StreamHandler(sys.stdout)
 ch.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 ch.setFormatter(formatter)
-root.addHandler(ch)
+logger.addHandler(ch)
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("pip", help="IP address of Tor pathfinding server")
     parser.add_argument("pport", type=int, help="IP address of Tor pathfinding server")
+    parser.add_argument("pubkey", help="Path to pathfinding server public key")
+    parser.add_argument("--cdb", help="Path to the Circuit Database")
     parser.add_argument("--port", type=int, help="Port to bind to", default=0)
     args = parser.parse_args()
-    return args.pip, args.pport, args.port
+    return args.pip, args.pport, args.pubkey, args.cdb, args.port
 
 
 class CustomTCPServer(TCPServer, object):
-    def __init__(self, server_address, request_handler):
+    def __init__(self, server_address, cdb, pubkey, request_handler):
+        logger.info("Setting up server...")
         super(CustomTCPServer, self).__init__(server_address, request_handler)
         self.key = Crypt().generate_key()
+        self.crypt = Crypt(self.key)
+        self.cdb = CircuitDatabase(db_path=cdb, rid='\x00' * 8, pubkey=pubkey)
+        logger.info("Server running")
 
 
 class MyTCPHandler(BaseRequestHandler):
@@ -60,50 +68,20 @@ class MyTCPHandler(BaseRequestHandler):
 
     def handle(self):
         logging.info('handling connection from %s:%s' % self.client_address)
-        logging.info('Establishing circuit')
-        self.read_circuit_establishment()
-
-        logging.info('Forwarding payload')
-        while self.forward_payload():
-            logging.info('Forwarding response')
-            self.forward_response()
-
-            logging.info('Forwarding payload')
-
-    def read_circuit_establishment(self):
-        logging.debug("Waiting for pubkey...")
-        client_pubkey = self.pull(self.request, self.DER_LEN)
-        logging.debug("Got pubkey (%dB)" % len(client_pubkey))
-        client_pubkey = RSA.importKey(client_pubkey)
-        self.client_crypt = Crypt(public_key=client_pubkey,
-                                  private_key=self.server.key,
-                                  name="client")
 
         logging.debug("Waiting for header...")
         header = self.pull(self.request, self.HEADER_SIZE)
-        num_chunks, self.next_ip, self.next_port = self.client_crypt.decrypt_and_auth(header).split(":")
-        logging.debug("Received header (%dB) %s:%s:%s" % (len(header), num_chunks, self.next_ip, self.next_port))
 
-        logging.debug("Waiting for body of %d blocks..." % (int(num_chunks)))
-        data = self.pull(self.request, self.CT_BLOCK_SIZE * int(num_chunks))
-        logging.debug("Received body (%dB)" % len(data))
-        data = self.client_crypt.decrypt_and_auth(data)
+        try:
+            method, circ = self.server.cdb.get(header, self.server.crypt)
+        except BadMethod:
+            raise BadMethod  # TODO: handle
 
-        if self.next_ip == "EXIT":
-            logging.info("is exit node")
-            self.exit = True
-            prev_pubkey, payload = data[:self.DER_LEN], data[self.DER_LEN:]
+        if method == self.server.cdb.ESTB:
+            circ.build_circuit(self.request)
+            self.server.cdb.add(circ)
         else:
-            prev_pubkey, next_pubkey, payload = data[:self.DER_LEN], data[self.DER_LEN:2*self.DER_LEN], \
-                                                data[2*self.DER_LEN:]
-            self.next_crypt = Crypt(public_key=RSA.importKey(next_pubkey),
-                                    private_key=self.server.key,
-                                    name="next_router")
-            self.make_next_hop((self.next_ip, int(self.next_port)), payload)
-
-        self.prev_crypt = Crypt(public_key=RSA.importKey(prev_pubkey),
-                                private_key=self.server.key,
-                                name="prev_router")
+            pass
 
     def make_next_hop(self, next_hop, data):
         logging.info("Sending establishment circuit to next router")
@@ -169,20 +147,24 @@ class MyTCPHandler(BaseRequestHandler):
 
 
 if __name__ == "__main__":
-    pip, pport, port= parse_args()
+    pip, pport, pubkeyf, cdb, port = parse_args()
     # Create the server, binding to localhost on PORT
-    server = CustomTCPServer(("0.0.0.0", port), MyTCPHandler)
+    with open(pubkeyf, "r") as f:
+        pubkey = f.read()
+
+    logger.info("Building server..")
+    server = CustomTCPServer(("0.0.0.0", port), cdb, pubkey, MyTCPHandler)
 
     # Send public key and port to pathing server
     pathing_server = TORPathingServer(pip, pport)
 
     _, port = server.server_address
-    logging.info("Registering self...")
+    logger.info("Registering self...")
     pathing_server.register(port, server.key.publickey())
-    logging.info("Registered")
+    logger.info("Registered")
     try:
-        logging.info("Starting server...")
+        logger.info("Starting server...")
         server.serve_forever()
     except:
-        logging.info("Exiting and unregistering Tor router")
+        logger.info("Exiting and unregistering Tor router")
     pathing_server.unregister()

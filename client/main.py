@@ -22,6 +22,7 @@ def parse_args():
     parser.add_argument("port", type=int, help="Port to bind Tor proxy to")
     parser.add_argument("pip", help="IP address of Tor pathfinding server")
     parser.add_argument("pport", type=int, help="IP address of Tor pathfinding server")
+    parser.add_argument("--dbpath", help="")
     parser.add_argument("--testti", help="Include to use test tor_interface", action='store_true')
     args = parser.parse_args()
     return args.port, args.pip, args.pport, args.testti

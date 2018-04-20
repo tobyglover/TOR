@@ -109,8 +109,11 @@ class TorRouterInterface(object):
             payload += self.client_sym.encrypt_payload(header, "EXIT")
         else:
             self.next_symkey = self.client_sym.generate()
+            header = self.client_key.publickey().exportKey("DER")
             next_payload = self.next_router.establish_circuit(self.next_symkey)
-            header = self.client_key.publickey().exportKey("DER") + self.prev_symkey + self.next_symkey + next_payload
+            header += struct.pack("16s16s4sL%ds" % len(next_payload), self.prev_symkey,
+                                  self.next_symkey, socket.inet_aton(self.ipp[0]),
+                                  self.ipp[1], next_payload)
             payload += self.client_sym.encrypt_payload(header, "ESTB")
 
         if not self.is_entry:
