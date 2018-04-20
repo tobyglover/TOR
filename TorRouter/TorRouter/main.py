@@ -159,9 +159,10 @@ if __name__ == "__main__":
     pathing_server = TORPathingServer(pip, pport)
 
     _, port = server.server_address
-    logger.info("Registering self...")
-    pathing_server.register(port, server.key.publickey())
-    logger.info("Registered")
+    logging.info("Registering self...")
+    pathing_server.register(port, server.key)
+    logging.info("Registered")
+
     try:
         logger.info("Starting server...")
         server.serve_forever()

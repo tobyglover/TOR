@@ -79,14 +79,15 @@ class TORPathingServer(object):
 
     args:
         port (int): port that the router is listening on
-        publicKey (Crypto.PublicKey.RSA instance): public key for the router
+        privatekey (Crypto.PublicKey.RSA instance): private key for the router. Only the public key
+            is sent
 
     returns: None
     """
-    def register(self, port, publicKey):
+    def register(self, port, privatekey):
         assert self._router_id is None, "Error: instance is already registered with server"
         conn = self._newconnection()
-        conn.send(struct.pack("!cI%ds" % DER_KEY_SIZE, MSG_TYPES.REGISTER_SERVER, port, publicKey.exportKey(format='DER')))
+        conn.send(struct.pack("!cI%ds" % DER_KEY_SIZE, MSG_TYPES.REGISTER_SERVER, port, privatekey.publickey().exportKey(format='DER')))
         self._router_id = conn.receive()
 
     """
