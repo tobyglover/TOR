@@ -1,13 +1,31 @@
 from Crypto.PublicKey import RSA
 from Crypto.Signature import pss
 from Crypto.Hash import SHA256
-from Crypto.Cipher import PKCS1_OAEP, AES, ChaCha20
+from Crypto.Cipher import PKCS1_OAEP
 from Crypto.Protocol.KDF import PBKDF2
+from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 from os import urandom
 import struct
 import logging
 import sys
+
+
+crypt_logger = logging.getLogger("Crypt")
+ch = logging.StreamHandler(sys.stdout)
+crypt_logger.setLevel(logging.DEBUG)
+ch.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+crypt_logger.addHandler(ch)
+
+sym_logger = logging.getLogger("Symmetric")
+ch = logging.StreamHandler(sys.stdout)
+sym_logger.setLevel(logging.DEBUG)
+ch.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+sym_logger.addHandler(ch)
 
 MAX_MSG_LEN = 214 # determined manually for RSA2048 key, padding with PKCS1_OAEP
 KEY_SIZE = 2048
@@ -15,7 +33,6 @@ KEY_SIZE = 2048
 
 class Crypt(object):
     PUB_DER_LEN = len(RSA.generate(KEY_SIZE).publickey().exportKey('DER'))
-    PUB_PEM_LEN = len(RSA.generate(KEY_SIZE).publickey().exportKey('PEM'))
 
     def __init__(self, private_key=None, public_key=None, name='', debug=False):
         self.public_key = public_key
@@ -25,7 +42,7 @@ class Crypt(object):
 
     def log(self, message):
         if self._debug:
-            logging.debug(message)
+            crypt_logger.debug(message)
 
     def generate_key(self):
         return RSA.generate(KEY_SIZE)
@@ -37,34 +54,39 @@ class Crypt(object):
         self.public_key = publicKey
 
     def sign_and_encrypt(self, data):
-        cipher_rsa = PKCS1_OAEP.new(self._public_key)
+        cipher = PKCS1_OAEP.new(self.public_key)
         self.log("Signing with own key %s" % self._private_key.publickey().exportKey(format="DER").encode('hex')[66:74])
         self.log("Encrypting with %s's key %s" % (self._name, self.public_key.exportKey(format="DER").encode('hex')[66:74]))
         signature = pss.new(self._private_key).sign(SHA256.new(data))
         # print signature.encode('hex')[:16], signature.encode('hex')[-16:], data.encode('hex')[:16], data.encode('hex')[-16:]
         data = signature + data
 
-        session_key = get_random_bytes(16)
-        iv = get_random_bytes(16)
+        message = ""
+        i = 0
+        while i * MAX_MSG_LEN < len(data):
+            message += cipher.encrypt(data[i * MAX_MSG_LEN : (i + 1) * MAX_MSG_LEN])
+            i += 1
 
-        cipher_aes = AES.new(session_key, AES.MODE_CFB, iv=iv)
-        message = cipher_aes.encrypt(data)
-
-        return cipher_rsa.encrypt(session_key + iv) + message
+        return message
 
     def decrypt(self, message):
-        self.log("Checking signature with %s's key %s" % (self._name, self.public_key.exportKey(format="DER").encode('hex')[66:74]))
         self.log("Decrypting with own key %s" % self._private_key.publickey().exportKey(format="DER").encode('hex')[66:74])
 
-        cipher_rsa = PKCS1_OAEP.new(self._private_key)
-        aes_data = cipher_rsa.decrypt(message[:256])
-        cipher_aes = AES.new(aes_data[:16], AES.MODE_CFB, iv=aes_data[16:])
+        cipher = PKCS1_OAEP.new(self._private_key)
+        chunk_size = KEY_SIZE / 8
+        data = ""
+        i = 0
 
-        data = cipher_aes.decrypt(message[256:])
+        while chunk_size * i < len(message):
+            chunk = message[i * chunk_size : (i + 1) * chunk_size]
+            data += cipher.decrypt(chunk)
+            i += 1
 
+        # print data[:256].encode('hex')[:16], data[:256].encode('hex')[-16:], data[256:].encode('hex')[:16], data[256:].encode('hex')[-16:]
         return data[256:], data[:256]
 
     def auth(self, data, hash):
+        self.log("Checking signature with %s's key %s" % (self._name, self.public_key.exportKey(format="DER").encode('hex')[66:74]))
         verifier = pss.new(self.public_key)
         verifier.verify(SHA256.new(data), hash)
 
@@ -90,7 +112,7 @@ class Symmetric(object):
     STATUS_OK = "OKOK"
     STATUS_EXIT = "EXIT"
 
-    def __init__(self, key='', sid="\00"*8):
+    def __init__(self, key='', sid="\00"*8, debug=False):
         self.raw_key = key
         self.sid = sid
         self.key = None
@@ -99,14 +121,20 @@ class Symmetric(object):
         self.head_tag = None
         self.body_nonce = None
         self.body_tag = None
+        self._debug = debug
 
-    def generate(self):
+    def log(self, message):
+        if self._debug:
+            sym_logger.debug(message)
+
+    @staticmethod
+    def generate():
         return urandom(16)
 
     def unpack_payload(self, payload):
         return (payload[:self.CRYPT_HEADER_LEN],
-                payload[self.CRYPT_HEADER_LEN:self.CRYPT_HEADER_LEN + self.HEADER_LEN],
-                payload[self.CRYPT_HEADER_LEN + self.HEADER_LEN:])
+                payload[self.CRYPT_HEADER_LEN:self.FULL_HEADER],
+                payload[self.FULL_HEADER:])
 
     def absorb_crypto_header(self, header):
         """Absorbs the cryptographic information in the crypto header
@@ -130,12 +158,21 @@ class Symmetric(object):
             MACMismatch: data authentication failed
             BadSID: SID doesn't match
         """
+        self.log("Decrypting header with key %s" % repr(self.raw_key.encode('hex')))
+        self.log("\nkey:    %s\nsalt:   %s\nnonce:  %s\ntag:    %s\nheader: %s"
+                 % (repr(self.raw_key.encode('hex')),
+                    repr(self.salt.encode('hex')),
+                    repr(self.head_nonce.encode('hex')),
+                    repr(self.head_tag.encode('hex')),
+                    repr(header.encode('hex'))))
+        self.log("ENCHEAD: %s" % repr(header))
         key = PBKDF2(self.raw_key, self.salt)
         cipher = AES.new(key, AES.MODE_GCM, self.head_nonce)
 
         cipher.update(self.sid)
+        header = cipher.decrypt_and_verify(header, self.head_tag)
         try:
-            header = cipher.decrypt_and_verify(header, self.head_tag)
+            pass
         except ValueError:
             raise MACMismatch
         num_bytes, status, sid = struct.unpack("!L4s8s", header)
@@ -159,6 +196,7 @@ class Symmetric(object):
         Raises:
             MACMismatch: data authentication failed
         """
+        self.log("Decrypting body with key %s" % repr(self.raw_key.encode('hex')))
         key = PBKDF2(self.raw_key, self.salt)
         cipher = AES.new(key, AES.MODE_GCM, self.body_nonce)
 
@@ -178,6 +216,7 @@ class Symmetric(object):
         Returns:
             str: encrypted data
         """
+        self.log("Encrypting body with key %s" % repr(self.raw_key.encode('hex')))
         # encrypt body
         salt = get_random_bytes(16)
         key = PBKDF2(self.raw_key, salt)
@@ -196,6 +235,15 @@ class Symmetric(object):
         head_nonce = cipher.nonce
 
         crypto_head = salt + head_tag + head_nonce + body_tag + body_nonce
+        self.log("\nkey:    %s\nsalt:   %s\nnonce:  %s\ntag:    %s\nheader: %s"
+                 % (repr(self.raw_key.encode('hex')),
+                    repr(salt.encode('hex')),
+                    repr(head_nonce.encode('hex')),
+                    repr(head_tag.encode('hex')),
+                    repr(header.encode('hex'))))
+        self.log("SYM HEADER: '%s...%s'" % (crypto_head.encode('hex')[:8],
+                                            header.encode('hex')[-8:]))
+        self.log("ENCHEAD: %s" % repr(header))
         return crypto_head + header + ct
 
 
@@ -215,7 +263,7 @@ def test():
 def test_sym():
     key = get_random_bytes(16)
     sid = "12345678"
-    message = "This is the example message! " * 0
+    message = "This is the example message! " * 10
     status = "OKOK"
     c1 = Symmetric(key, sid)
 
@@ -228,18 +276,9 @@ def test_sym():
     c2.absorb_crypto_header(crypt_header)
 
     print c2.decrypt_header(header)
-    print c2.decrypt_body(body)
+    print repr(c2.decrypt_body(body))
 
 
 if __name__ == '__main__':
-    root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
-
-    ch = logging.StreamHandler(sys.stdout)
-    ch.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    ch.setFormatter(formatter)
-    root.addHandler(ch)
-
-    test()
-    # test_sym()
+    # test()
+    test_sym()

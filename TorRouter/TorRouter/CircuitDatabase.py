@@ -8,13 +8,13 @@ from Crypt import Crypt
 from Crypto.PublicKey import RSA
 
 
-db_logger = logging.getLogger("CircuitDatabase")
-db_logger.setLevel(logging.INFO)
+cdb_logger = logging.getLogger("CircuitDatabase")
+cdb_logger.setLevel(logging.DEBUG)
 ch = logging.StreamHandler(sys.stdout)
 ch.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 ch.setFormatter(formatter)
-db_logger.addHandler(ch)
+cdb_logger.addHandler(ch)
 
 
 class CircuitNotFound(Exception):
@@ -29,7 +29,7 @@ class CircuitDatabase(object):
     ESTB = "ESTB"
     CLNT = "CLNT"
 
-    def __init__(self, db_path=None, rid=None, pubkey=None):
+    def __init__(self, db_path=None, rid=None, raw_pubkey=None):
         """CircuitDatabase
 
         Asynchronous SQLite database for Circuit objects
@@ -38,7 +38,7 @@ class CircuitDatabase(object):
             db_path (str, optional): Path to existing circuit database
                                      will create new database if not included
             rid (str, optional): RID to initialize pathfinding server entry to
-            pubkey (str, optional): pubkey to initialize pathfinding server entry to
+            raw_pubkey (str, optional): pubkey to initialize pathfinding server entry to
         """
         self.db_mutex = Lock()
 
@@ -50,12 +50,12 @@ class CircuitDatabase(object):
             self.cur.execute("CREATE TABLE pfs (id BLOB NOT NULL UNIQUE, pubkey text NOT NULL);")
             self.cur.execute("CREATE TABLE circuits (id BLOB NOT NULL UNIQUE, circuit BLOB NOT NULL);")
             self.cur.execute("INSERT INTO pfs(id, pubkey) VALUES (?,?);",
-                             (rid.encode('hex'), pubkey.encode('hex')))
+                             (rid.encode('hex'), raw_pubkey.encode('hex')))
             self.db.commit()
         except sqlite3.OperationalError:
             pass
 
-        db_logger.info("Initialized database")
+        cdb_logger.info("Initialized database")
 
     def __del__(self):
         self.db.close()
@@ -104,10 +104,10 @@ class CircuitDatabase(object):
                                                                                  circ.export().encode('hex')))
 
         self.db.commit()
-        db_logger.info("Added circuit " + repr(circ.cid.encode('hex')))
+        cdb_logger.info("Added circuit " + repr(circ.cid.encode('hex')))
         return True
         # except sqlite3.IntegrityError:
-        #     db_logger.info("Couldn't add ID: " + repr(circ.cid))
+        #     logger.info("Couldn't add ID: " + repr(circ.cid))
         #     return False
 
     @lock_db
@@ -115,9 +115,9 @@ class CircuitDatabase(object):
         self.cur.execute(command, (cid.encode("hex"),))
         c = self.cur.fetchone()
         if c:
-            db_logger.info("Found circuit " + repr(cid.encode('hex')))
+            cdb_logger.info("Found circuit " + repr(cid.encode('hex')))
             return c[0].decode('hex')
-        db_logger.error("Couldn't find circuit " + repr(cid.encode('hex')))
+        cdb_logger.error("Couldn't find circuit " + repr(cid.encode('hex')))
         raise CircuitNotFound
 
     def get(self, header, crypt):
@@ -138,7 +138,9 @@ class CircuitDatabase(object):
             BadMethod: if method is not supported
             ValueError: if authentication fails
         """
+        cdb_logger.debug("Header_ct (%dB): %s" % (len(header), repr(header.encode('hex')[:8])))
         header, hsh = crypt.decrypt(header)
+        cdb_logger.debug("Header_pt (%dB): %s" % (len(header), repr(header.encode('hex')[:8])))
         method, cid, rest = header[:4], header[4:12], header[12:]
 
         if method == self.ESTB:
@@ -146,6 +148,8 @@ class CircuitDatabase(object):
             pfc = PFCircuit(cid, pf_raw)
             pfc.auth_header(header, hsh, crypt)
             sid, symkey = rest[:8], rest[8:]
+            # logger.debug("CREATING CLIENT WITH SID: %s SYMKEY: %s" % (repr(sid.encode('hex')),
+            #                                                           repr(symkey.encode('hex'))))
             return self.ESTB, ClientCircuit(sid, symkey, crypt)
         elif method == self.CLNT:
             c_raw = self._do_get("SELECT circuit FROM circuits WHERE id = (?);", cid)
@@ -153,6 +157,7 @@ class CircuitDatabase(object):
             circ.auth_header(header, hsh, crypt)
             return self.ESTB, circ
         else:
+            cdb_logger.error("Bad method %s" % repr(method))
             raise BadMethod
 
     @lock_db
@@ -169,7 +174,7 @@ class CircuitDatabase(object):
             self.cur.execute("DELETE FROM pfs WHERE id = (?);", (cid,))
         else:
             self.cur.execute("DELETE FROM circuits WHERE id = (?);", (cid,))
-        db_logger.info("Removed circuit " + repr(cid))
+        cdb_logger.info("Removed circuit " + repr(cid))
 
 
 if __name__ == "__main__":

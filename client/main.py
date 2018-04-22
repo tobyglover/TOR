@@ -6,15 +6,15 @@ import sys
 from TorPathingServer import TORPathingServer, PathingFailed, TestTORPathingServer
 from TorRouter import TorRouterInterface, TestTorRouterInterface, CircuitFailed
 from Crypt import Crypt
+from Crypto.PublicKey import RSA
 
-root = logging.getLogger()
-root.setLevel(logging.DEBUG)
-
+client_logger = logging.getLogger("Client")
 ch = logging.StreamHandler(sys.stdout)
+client_logger.setLevel(logging.DEBUG)
 ch.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 ch.setFormatter(formatter)
-root.addHandler(ch)
+client_logger.addHandler(ch)
 
 
 def parse_args():
@@ -22,10 +22,10 @@ def parse_args():
     parser.add_argument("port", type=int, help="Port to bind Tor proxy to")
     parser.add_argument("pip", help="IP address of Tor pathfinding server")
     parser.add_argument("pport", type=int, help="IP address of Tor pathfinding server")
-    parser.add_argument("--dbpath", help="")
+    parser.add_argument("pubkey", help="Path to the PathingServer public key")
     parser.add_argument("--testti", help="Include to use test tor_interface", action='store_true')
     args = parser.parse_args()
-    return args.port, args.pip, args.pport, args.testti
+    return args.port, args.pip, args.pport, args.pubkey, args.testti
 
 
 tor_interface = None
@@ -51,58 +51,58 @@ class TorProxy(BaseHTTPRequestHandler):
             # headers = str(self.headers)
             # path = '/'.join(str(self.path).split("/")[3:])  # todo: do this better
             # request = "%s /%s %s\r\n%s\r\n" % (method, path, self.protocol_version, headers)
-            logging.info("Sending request")
+            client_logger.info("Sending request")
             resp = tor_interface.make_request(url, self.raw_requestline + str(self.headers) + "\r\n")
-            logging.info("Returning request...")
+            client_logger.info("Returning request...")
             self.wfile.write(resp)
-            logging.info("Served client")
+            client_logger.info("Served client")
         except KeyError:
-            logging.error("Bad request")
+            client_logger.error("Bad request")
             self.send_error(400)
 
     def do_CONNECT(self):
-        logging.info("Handling CONNECT")
+        client_logger.info("Handling CONNECT")
         self.forward_request()
 
     def do_DELETE(self):
-        logging.info("Handling DELETE")
+        client_logger.info("Handling DELETE")
         self.forward_request()
 
     def do_GET(self):
-        logging.info("Handling GET")
+        client_logger.info("Handling GET")
         self.forward_request()
 
     def do_HEAD(self):
-        logging.info("Handling HEAD")
+        client_logger.info("Handling HEAD")
         self.forward_request()
 
     def do_OPTIONS(self):
-        logging.info("Handling OPTIONS")
+        client_logger.info("Handling OPTIONS")
         self.forward_request()
 
     def do_PATCH(self):
-        logging.info("Handling PATCH")
+        client_logger.info("Handling PATCH")
         self.forward_request()
 
     def do_POST(self):
-        logging.info("Handling POST")
+        client_logger.info("Handling POST")
         self.forward_request()
 
     def do_PUT(self):
-        logging.info("Handling PUT")
+        client_logger.info("Handling PUT")
         self.forward_request()
 
 
 class TorClient(object):
 
-    def __init__(self, port, p_ip, p_port, test):
+    def __init__(self, port, p_ip, p_port, pubkey, test):
         self.test = test
         if test:
             self.path_server = TestTORPathingServer(p_ip, p_port)
         else:
-            self.path_server = TORPathingServer(p_ip, p_port)
+            self.path_server = TORPathingServer(p_ip, p_port, pubkey)
         self.has_route = False
-        logging.info("Initializing TorProxy server")
+        client_logger.info("Initializing TorProxy server")
         self.tp = HTTPServer(('localhost', port), TorProxy)
 
     def establish_path(self):
@@ -120,11 +120,16 @@ class TorClient(object):
                 self.path_server.register(3, rk3.publickey())
             route = self.path_server.get_route()
             if self.test:
+                # print "test"
                 # print route
                 tr3 = TestTorRouterInterface(route[2], is_exit=True, router_key=rk3, server_pubkey=spk)
                 tr2 = TestTorRouterInterface(route[1], tr3, router_key=rk2, server_pubkey=spk)
                 tor_interface = TestTorRouterInterface(route[0], tr2, is_entry=True, router_key=rk1, server_pubkey=spk)
+                # print "made"
             else:
+                client_logger.debug("Route %s:%d -> %s:%d -> %s:%d" % (route[0][1], route[0][2],
+                                                                       route[1][1], route[1][2],
+                                                                       route[2][1], route[2][2]))
                 tr3 = TorRouterInterface(route[2])
                 tr2 = TorRouterInterface(route[1], tr3)
                 tor_interface = TorRouterInterface(route[0], tr2, True)
@@ -135,35 +140,43 @@ class TorClient(object):
         global tor_interface
         while True:
             try:
-                logging.info("Establishing new path")
+                client_logger.info("Establishing new path")
                 self.establish_path()
-                logging.info("Starting server")
+                client_logger.info("Starting server")
                 self.tp.serve_forever()
             except PathingFailed:
-                logging.error("Pathing failed: try again later")
+                client_logger.error("Pathing failed: try again later")
                 return
             except CircuitFailed:
-                logging.error("Circuit failed!")
+                client_logger.error("Circuit failed!")
                 try:
                     tor_interface.close_circuit()
                 except CircuitFailed:
-                    logging.error("Closing circuit failed! Network may be corrupted")
+                    client_logger.error("Closing circuit failed! Network may be corrupted")
                     return
             except:
-                logging.info("Closing circuit...")
-                try:
-                    tor_interface.close_circuit()
-                except CircuitFailed:
-                    logging.error("Closing circuit failed! Network may be corrupted")
-                    return
-                logging.info("Exiting")
-                return
+                client_logger.error("Received exception")
+                e = sys.exc_info()
+                if tor_interface:
+                    client_logger.info("Closing circuit...")
+                    try:
+                        # tor_interface.close_circuit() TODO: Change this back *****
+                        pass
+                    except CircuitFailed:
+                        e = sys.exc_info()
+                        client_logger.error("Closing circuit failed! Network may be corrupted")
+                        raise e[0], e[1], e[2]
+                client_logger.info("Exiting")
+                raise e[0], e[1], e[2]
 
 
 def main():
-    port, p_ip, p_port, testti = parse_args()
+    port, p_ip, p_port, pubkeyp, testti = parse_args()
 
-    tc = TorClient(port, p_ip, p_port, testti)
+    with open(pubkeyp, "r") as f:
+        pubkey = RSA.importKey(f.read())
+
+    tc = TorClient(port, p_ip, p_port, pubkey, testti)
     tc.run_client()
 
 

@@ -26,10 +26,10 @@ class CustomTCPServer(TCPServer, object):
         self.private_key = self._getPrivateKey()
         self.tor_routers = {}
         self._connections = 0
-        self.rid = get_random_bytes(16)
+        self.rid = "\x00" * 8
 
     def _getPrivateKey(self):
-        with open('private.pem','r') as f:
+        with open('private.pem', 'r') as f:
             return RSA.import_key(f.read())
 
     def getUniqueConnectionId(self):
@@ -75,7 +75,7 @@ class TCPHandler(BaseRequestHandler):
 
         for i in range(min(len(shuffled_keys), MAX_PATH_LENGTH)):
             details = self.server.tor_routers[shuffled_keys[i]]
-            c = Crypt(public_key=RSA.import_key(details["pub_key"]), private_key=self.server.private_key)
+            c = Crypt(public_key=RSA.import_key(details["pub_key"]), private_key=self.server.private_key, debug=True)
             sid = get_random_bytes(8)
             sym_key = get_random_bytes(16)
             enc_pkt = c.sign_and_encrypt("ESTB" + self.server.rid + sid + sym_key)
@@ -129,6 +129,7 @@ def main():
     server = CustomTCPServer((HOST, PORT), TCPHandler)
     print "\nRunning on port %d\n" % PORT
     server.serve_forever()
+
 
 if __name__ == "__main__":
     main()

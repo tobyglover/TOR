@@ -14,10 +14,13 @@ class PathingFailed(Exception):
 
 
 class Connection(object):
-    def __init__(self, server_ip, server_port, private_key):
+    def __init__(self, server_ip, server_port, private_key, server_pubkey=None):
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._socket.connect((server_ip, server_port))
-        self._crypt = Crypt(private_key, self._getServerPublicKey())
+        if server_pubkey:
+            self._crypt = Crypt(private_key, server_pubkey)
+        else:
+            self._crypt = Crypt(private_key, self._getServerPublicKey())
         self._sendPublicKey(private_key)
 
     def __del__(self):
@@ -56,23 +59,24 @@ class TORPathingServer(object):
         server_port (int): port number of the pathing server
     """
 
-    def __init__(self, server_ip, server_port):
+    def __init__(self, server_ip, server_port, server_pubkey=None):
         self._server_ip = server_ip
         self._server_port = server_port
         self._router_id = None
         self._private_key = Crypt().generate_key()
+        self._server_pubkey = server_pubkey
 
     def __del__(self):
         self.unregister()
 
     def _newconnection(self):
-        return Connection(self._server_ip, self._server_port, self._private_key)
+        return Connection(self._server_ip, self._server_port, self._private_key, self._server_pubkey)
 
     def _parse_route_node(self, data):
         enc_pkt, ip, port, pk, sid, sym_key = struct.unpack(ROUTE_STRUCT_FMT, data)
         ip = socket.inet_ntoa(ip)
         pk = RSA.import_key(pk)
-        return (enc_pkt, ip, port, pk, sid, sym_key)
+        return enc_pkt, ip, port, pk, sid, sym_key
 
     """
     Registers a new TOR router with the pathing server
@@ -116,6 +120,8 @@ class TORPathingServer(object):
         conn = self._newconnection()
         conn.send(struct.pack("!c", MSG_TYPES.GET_ROUTE))
         route_data = conn.receive(4096)
+        if len(route_data) == 0:
+            raise PathingFailed
         i = 0
         route = []
         while (i + 1) * ROUTE_INFO_SIZE <= len(route_data):
