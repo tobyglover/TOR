@@ -1,11 +1,13 @@
 import argparse
 import logging
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
+from SocketServer import ThreadingMixIn
 import sys
 from TorPathingServer import TORPathingServer, PathingFailed, TestTORPathingServer
 from TorRouter import TorRouterInterface, TestTorRouterInterface, CircuitFailed
 from Crypt import Crypt
 from Crypto.PublicKey import RSA
+import thread
 
 
 client_logger = logging.getLogger("Client")
@@ -39,6 +41,7 @@ class TorProxy(BaseHTTPRequestHandler):
         return url.split('/')[0]
 
     def forward_request(self):
+        # return
         try:
             _, url, _ = self.raw_requestline.split(' ')
             url = self.clean_url(url)
@@ -62,35 +65,51 @@ class TorProxy(BaseHTTPRequestHandler):
 
     def do_CONNECT(self):
         client_logger.info("Handling CONNECT")
-        self.forward_request()
+        thread.start_new_thread(self.forward_request, ())
+        # self.forward_request()
 
     def do_DELETE(self):
         client_logger.info("Handling DELETE")
-        self.forward_request()
+        thread.start_new_thread(self.forward_request, ())
+        # self.forward_request()
 
     def do_GET(self):
+        # self.send_response(200)
+        # self.end_headers()
+        # self.wfile.write("hello world!\n" * 500)
         client_logger.info("Handling GET")
+        # thread.start_new_thread(self.forward_request, ())
         self.forward_request()
 
     def do_HEAD(self):
         client_logger.info("Handling HEAD")
+        # thread.start_new_thread(self.forward_request, ())
         self.forward_request()
 
     def do_OPTIONS(self):
         client_logger.info("Handling OPTIONS")
+        # thread.start_new_thread(self.forward_request, ())
         self.forward_request()
 
     def do_PATCH(self):
         client_logger.info("Handling PATCH")
+        # thread.start_new_thread(self.forward_request, ())
         self.forward_request()
 
     def do_POST(self):
         client_logger.info("Handling POST")
+        # thread.start_new_thread(self.forward_request, ())
         self.forward_request()
 
     def do_PUT(self):
         client_logger.info("Handling PUT")
+        # thread.start_new_thread(self.forward_request, ())
         self.forward_request()
+
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    """Handle requests in a separate thread."""
+    pass
 
 
 class TorClient(object):
@@ -103,7 +122,8 @@ class TorClient(object):
             self.path_server = TORPathingServer(p_ip, p_port, pubkey)
         self.has_route = False
         client_logger.info("Initializing TorProxy server")
-        self.tp = HTTPServer(('localhost', port), TorProxy)
+        self.tp = ThreadedHTTPServer(('localhost', port), TorProxy)
+        # self.tp = HTTPServer(('localhost', port), TorProxy)
 
     def establish_path(self):
         global tor_interface
@@ -154,14 +174,13 @@ class TorClient(object):
                 except CircuitFailed:
                     client_logger.error("Closing circuit failed! Network may be corrupted")
                     return
-            except Exception:
+            except:
                 client_logger.error("Received exception")
                 e = sys.exc_info()
                 if tor_interface:
                     client_logger.info("Closing circuit...")
                     try:
-                        # tor_interface.close_circuit() TODO: Change this back *****
-                        pass
+                        tor_interface.close_circuit()
                     except CircuitFailed:
                         e = sys.exc_info()
                         client_logger.error("Closing circuit failed! Network may be corrupted")

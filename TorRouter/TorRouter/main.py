@@ -85,8 +85,13 @@ class MyTCPHandler(BaseRequestHandler):
             self.server.cdb.add(circ)
         else:
             router_logger.info("Handling request")
-            circ.forward_payload(self.request)
-            router_logger.info("Sucessfully returned request")
+            status = circ.handle_connection(self.request)
+
+            if status == circ.EXIT:
+                router_logger.info("Removing circuit %s" % repr(circ.name))
+                self.server.cdb.remove(circ)
+            else:
+                router_logger.info("Sucessfully returned request")
 
     def make_next_hop(self, next_hop, data):
         router_logger.info("Sending establishment circuit to next router")

@@ -21,6 +21,7 @@ class Circuit(object):
         self.cid = cid
         self.is_pf = is_pf
         self.pubkey = None
+        self.name = cid.encode("hex")[:8]
 
     def export(self):
         raise NotImplemented
@@ -68,6 +69,7 @@ class PFCircuit(Circuit):
 
 
 class ClientCircuit(Circuit):
+    EXIT = "EXIT"
 
     def __init__(self, cid, client_symkey, crypt, from_string=None):
         super(ClientCircuit, self).__init__(cid, False)
@@ -153,7 +155,7 @@ class ClientCircuit(Circuit):
 
         prev_sock.sendall(payload)
 
-    def forward_payload(self, prev_sock):
+    def _forward_payload(self, prev_sock, payload):
         """forward_payload
 
         Forwards a payload to the next router/destination
@@ -161,9 +163,8 @@ class ClientCircuit(Circuit):
         Args:
             prev_sock (socket.socket): socket connection to the previous hop
         """
-        payload, status = self._get_payload(prev_sock, self.client_sym)  # TODO: handle bad status
-
         next_sock = socket.socket()
+
         if self.is_exit:
             ip, self.port, payload = struct.unpack(">4sl%ds" % (len(payload) - 8), payload)
             self.ip = socket.inet_ntoa(ip)
@@ -199,5 +200,28 @@ class ClientCircuit(Circuit):
         payload = self.prev_sym.encrypt_payload(payload, 'OKOK')
         prev_sock.sendall(payload)
 
-    def close_circuit(self, prev_sock):
-        pass
+    def _close_circuit(self, prev_sock, payload):
+
+        if self.is_exit:
+            payload = ""
+        else:
+            next_sock = socket.socket()
+            circuit_logger.info("Connecting to next router %s:%d" % (self.ip, self.port))
+            next_sock.connect((self.ip, self.port))
+            next_sock.sendall(payload)
+
+            circuit_logger.info("Getting response from %s:%d" % (self.ip, self.port))
+            payload, status = self._get_payload(next_sock, self.next_sym)  # TODO: handle bad status
+
+        payload = self.client_sym.encrypt_payload(payload, 'OKOK')
+        payload = self.prev_sym.encrypt_payload(payload, 'OKOK')
+        prev_sock.sendall(payload)
+
+    def handle_connection(self, prev_sock):
+        payload, status = self._get_payload(prev_sock, self.client_sym)  # TODO: handle bad status
+
+        if status == self.EXIT:
+            self._close_circuit(prev_sock, payload)
+        else:
+            self._forward_payload(prev_sock, payload)
+        return status

@@ -5,6 +5,7 @@ from os import urandom
 from Crypto.PublicKey import RSA
 import struct
 import sys
+from threading import Lock
 
 
 tri_logger = logging.getLogger("TorRouterInterface")
@@ -59,6 +60,30 @@ class TorRouterInterface(object):
         self.client_sym = Symmetric(self.client_symkey, sid)
         self.resp_sym = Symmetric(self.resp_symkey)
 
+        self.db_mutex = Lock()
+
+    def lock_interface(func):
+        """function wrapper for functions that require db access"""
+
+        def func_wrap(self, *args):
+            """acquire and release dbMuted if available"""
+            # if self.db_mutex:
+            self.db_mutex.acquire()
+            result = None
+            e = None
+            try:
+                result = func(self, *args)
+            except:
+                e = sys.exc_info()
+                pass
+            finally:
+                self.db_mutex.release()
+                if e:
+                    raise e[0], e[1], e[2]
+                return result
+
+        return func_wrap
+
     def _keep_alive(self):
         pass # TODO: add keep alive
 
@@ -100,6 +125,7 @@ class TorRouterInterface(object):
             return body
         return self.next_router.peel_onion(body)
 
+    @lock_interface
     def establish_circuit(self, prev_symkey=None):
         """establish_circuit
 
@@ -141,6 +167,7 @@ class TorRouterInterface(object):
         response = self._recv()
         self.peel_onion(response)
 
+    @lock_interface
     def make_request(self, url, request):
         """make_request
 
@@ -184,6 +211,7 @@ class TorRouterInterface(object):
         response = self._recv()
         return self.peel_onion(response)
 
+    @lock_interface
     def close_circuit(self):
         """close_circuit
 
@@ -194,22 +222,22 @@ class TorRouterInterface(object):
         """
         # generate new client symkey
         self.client_symkey = urandom(16)
-        client_sym = Symmetric(self.client_symkey, self.sid)
+        self.client_sym = Symmetric(self.client_symkey, self.sid)
 
         payload = self.crypt.sign_and_encrypt("CLNT" + self.sid + self.client_symkey)
         if self.is_exit:
-            payload += client_sym.encrypt_payload("", "EXIT")
+            payload += self.client_sym.encrypt_payload("", "EXIT")
         else:
             next_request = self.next_router.close_circuit()
-            payload += client_sym.encrypt_payload(next_request, "EXIT")
+            payload += self.client_sym.encrypt_payload(next_request, "EXIT")
 
         if not self.is_entry:
             return payload
 
-        logging.info("Sending packet")
+        logging.info("Closing circuit")
         self._send(payload)
         response = self._recv()
-        self.peel_onion(response)
+        return self.peel_onion(response)
 
 
 class TestTorRouterInterface(object):

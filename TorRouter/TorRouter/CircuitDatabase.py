@@ -138,9 +138,9 @@ class CircuitDatabase(object):
             BadMethod: if method is not supported
             ValueError: if authentication fails
         """
-        cdb_logger.debug("Header_ct (%dB): '%s...%s'" % (len(header), header.encode('hex')[:8], header.encode('hex')[-8:]))
+        # cdb_logger.debug("Header_ct (%dB): '%s...%s'" % (len(header), header.encode('hex')[:8], header.encode('hex')[-8:]))
         header, hsh = crypt.decrypt(header)
-        cdb_logger.debug("Header_pt (%dB): %s" % (len(header), repr(header.encode('hex')[:8])))
+        # cdb_logger.debug("Header_pt (%dB): %s" % (len(header), repr(header.encode('hex')[:8])))
         method, cid, rest = header[:4], header[4:12], header[12:]
 
         if method == self.ESTB:
@@ -171,12 +171,12 @@ class CircuitDatabase(object):
         Args:
             circ (Circuit): circuit to remove
         """
-        cid = circ.cid
+        cid = circ.cid.encode("hex")
         if circ.is_pf:
             self.cur.execute("DELETE FROM pfs WHERE id = (?);", (cid,))
         else:
             self.cur.execute("DELETE FROM circuits WHERE id = (?);", (cid,))
-        cdb_logger.info("Removed circuit " + repr(cid))
+        cdb_logger.info("Removed circuit " + repr(circ.name))
 
 
 if __name__ == "__main__":
