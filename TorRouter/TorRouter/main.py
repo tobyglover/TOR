@@ -52,7 +52,7 @@ class MyTCPHandler(BaseRequestHandler):
     DER_LEN = len(Crypt().generate_key().publickey().exportKey(format='DER'))
 
     def setup(self):
-        router_logger.info("Setting up router")
+        router_logger.info("Setting up TCPHandler")
         self.exit = False
         self.next_sock = None
         self.client_crypt = None
@@ -79,10 +79,12 @@ class MyTCPHandler(BaseRequestHandler):
             raise e[0], e[1], e[2]
 
         if method == self.server.cdb.ESTB:
+            router_logger.info("Building circuit")
             circ.build_circuit(self.request)
             self.server.cdb.add(circ)
         else:
-            pass # TODO: finish
+            router_logger.info("Handling request")
+            circ.forward_payload(self.request)
 
     def make_next_hop(self, next_hop, data):
         router_logger.info("Sending establishment circuit to next router")

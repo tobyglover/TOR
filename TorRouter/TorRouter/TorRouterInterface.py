@@ -123,15 +123,15 @@ class TorRouterInterface(object):
             self.next_symkey = self.client_sym.generate()
             header = self.client_key.publickey().exportKey("DER")
             next_payload = self.next_router.establish_circuit(self.next_symkey)
-            body = struct.pack(">16s16s4sL%ds" % len(next_payload), self.prev_symkey,
+            header += struct.pack(">16s16s4sL%ds" % len(next_payload), self.prev_symkey,
                                   self.next_symkey, socket.inet_aton(self.next_router.ipp[0]),
                                   self.next_router.ipp[1], next_payload)
             # print len(body)
-            header += body
-            p2 = self.client_sym.encrypt_payload(header, "ESTB")
-            payload += p2
-            tri_logger.debug("Sending header '%s...%s'" % (p2.encode('hex')[:8],
-                                                       p2.encode('hex')[self.client_sym.FULL_HEADER - 8:self.client_sym.FULL_HEADER]))
+            # header += body
+            # p2 =
+            payload += self.client_sym.encrypt_payload(header, "ESTB")
+            # tri_logger.debug("Sending header '%s...%s'" % (p2.encode('hex')[:8],
+            #                                            p2.encode('hex')[self.client_sym.FULL_HEADER - 8:self.client_sym.FULL_HEADER]))
 
         if not self.is_entry:
             return payload
@@ -167,8 +167,11 @@ class TorRouterInterface(object):
 
         payload = self.crypt.sign_and_encrypt("CLNT" + self.sid + self.client_symkey)
         if self.is_exit:
-            port_bs = struct.pack("!I", port)
-            payload += self.client_sym.encrypt_payload(socket.inet_aton(ip) + port_bs + request, "SEND")
+            # tri_logger.debug("Payload '%s...%s'", payload.encode("hex")[:8], payload.encode("hex"[-8:]))
+            next_request = struct.pack(">4sl%ds" % len(request), socket.inet_aton(ip), port, request)
+            # port_bs = struct.pack("!I", port)
+            # payload += self.client_sym.encrypt_payload(socket.inet_aton(ip) + port_bs + request, "SEND")
+            payload += self.client_sym.encrypt_payload(next_request, "SEND")
         else:
             next_request = self.next_router.make_request(url, request)
             payload += self.client_sym.encrypt_payload(next_request, "SEND")

@@ -1,4 +1,3 @@
-# from pathing_server_interface import PathingServerInterface, PathingFailed
 import argparse
 import logging
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
@@ -7,6 +6,7 @@ from TorPathingServer import TORPathingServer, PathingFailed, TestTORPathingServ
 from TorRouter import TorRouterInterface, TestTorRouterInterface, CircuitFailed
 from Crypt import Crypt
 from Crypto.PublicKey import RSA
+
 
 client_logger = logging.getLogger("Client")
 ch = logging.StreamHandler(sys.stdout)
@@ -154,7 +154,7 @@ class TorClient(object):
                 except CircuitFailed:
                     client_logger.error("Closing circuit failed! Network may be corrupted")
                     return
-            except:
+            except Exception:
                 client_logger.error("Received exception")
                 e = sys.exc_info()
                 if tor_interface:

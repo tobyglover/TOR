@@ -138,12 +138,13 @@ class CircuitDatabase(object):
             BadMethod: if method is not supported
             ValueError: if authentication fails
         """
-        cdb_logger.debug("Header_ct (%dB): %s" % (len(header), repr(header.encode('hex')[:8])))
+        cdb_logger.debug("Header_ct (%dB): '%s...%s'" % (len(header), header.encode('hex')[:8], header.encode('hex')[-8:]))
         header, hsh = crypt.decrypt(header)
         cdb_logger.debug("Header_pt (%dB): %s" % (len(header), repr(header.encode('hex')[:8])))
         method, cid, rest = header[:4], header[4:12], header[12:]
 
         if method == self.ESTB:
+            cdb_logger.info("Creating new client")
             pf_raw = self._do_get("SELECT pubkey FROM pfs WHERE id = (?);", cid)
             pfc = PFCircuit(cid, pf_raw)
             pfc.auth_header(header, hsh, crypt)
@@ -152,10 +153,11 @@ class CircuitDatabase(object):
             #                                                           repr(symkey.encode('hex'))))
             return self.ESTB, ClientCircuit(sid, symkey, crypt)
         elif method == self.CLNT:
+            cdb_logger.info("Finding old client")
             c_raw = self._do_get("SELECT circuit FROM circuits WHERE id = (?);", cid)
             circ = ClientCircuit(cid, rest, crypt, c_raw)
             circ.auth_header(header, hsh, crypt)
-            return self.ESTB, circ
+            return self.CLNT, circ
         else:
             cdb_logger.error("Bad method %s" % repr(method))
             raise BadMethod

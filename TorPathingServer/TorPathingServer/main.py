@@ -75,7 +75,7 @@ class TCPHandler(BaseRequestHandler):
 
         for i in range(min(len(shuffled_keys), MAX_PATH_LENGTH)):
             details = self.server.tor_routers[shuffled_keys[i]]
-            c = Crypt(public_key=RSA.import_key(details["pub_key"]), private_key=self.server.private_key, debug=True)
+            c = Crypt(public_key=RSA.import_key(details["pub_key"]), private_key=self.server.private_key)
             sid = get_random_bytes(8)
             sym_key = get_random_bytes(16)
             enc_pkt = c.sign_and_encrypt("ESTB" + self.server.rid + sid + sym_key)

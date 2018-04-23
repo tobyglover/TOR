@@ -86,7 +86,7 @@ class ClientCircuit(Circuit):
         else:
             circuit_logger.debug("Initializing new ClientCircuit")
 
-        self.client_sym = Symmetric(self.client_symkey, cid, debug=True)
+        self.client_sym = Symmetric(self.client_symkey, cid)
         self.pubkey = crypt.public_key
 
     def export(self):
@@ -96,12 +96,20 @@ class ClientCircuit(Circuit):
                            self.port, self.prev_symkey, self.next_symkey)
 
     @staticmethod
-    def pull(sock, length):
+    def _pull(sock, length):
         circuit_logger.debug("Pulling message of length %d" % length)
         message = ''
         while len(message) < length:
             message += sock.recv(length - len(message))
         return message
+
+    def _get_payload(self, sock, sym):
+        headers = self._pull(sock, self.client_sym.FULL_HEADER)
+        crypt_header, header, body = sym.unpack_payload(headers)
+        sym.absorb_crypto_header(crypt_header)
+        l, status = sym.decrypt_header(header)
+        body = sym.decrypt_body(self._pull(sock, l))
+        return body, status
 
     def build_circuit(self, prev_sock):
         """build_circuit
@@ -111,23 +119,7 @@ class ClientCircuit(Circuit):
         Args:
             prev_sock (socket.socket): socket connection to the previous hop
         """
-        headers = self.pull(prev_sock, self.client_sym.FULL_HEADER)
-        circuit_logger.debug("Receiving header '%s...%s' (%dB)" % (headers.encode('hex')[:8], headers.encode('hex')[-8:], len(headers)))
-        crypt_header, header, body = self.client_sym.unpack_payload(headers)
-        # crypt_header, header, _ = self.client_sym.unpack_payload(headers)
-        circuit_logger.debug("Receiving heade2 '%s...%s' (%dB)" % (crypt_header.encode('hex')[:8], header.encode('hex')[-8:], len(crypt_header) + len(header)))
-        self.client_sym.absorb_crypto_header(crypt_header)
-        l, status = self.client_sym.decrypt_header(header)
-
-        # crypt_header, header, body = c1.unpack_payload(packet)
-        #
-        # c2 = Symmetric(key, sid)
-        # c2.absorb_crypto_header(crypt_header)
-        #
-        # print c2.decrypt_header(header)
-        # print repr(c2.decrypt_body(body))
-        body = self.pull(prev_sock, l)
-        body = self.client_sym.decrypt_body(body)
+        body, status = self._get_payload(prev_sock, self.client_sym)  # TODO: handle bad status
 
         der_len = Crypt().PUB_DER_LEN
         raw_clientkey, body = body[:der_len], body[der_len:]
@@ -148,23 +140,56 @@ class ClientCircuit(Circuit):
             self.is_exit = False
             self.next_sym = Symmetric(self.next_symkey)
 
+            circuit_logger.info("Connecting to %s:%d" % (self.ip, self.port))
             next_sock = socket.socket()
             next_sock.connect((self.ip, self.port))
             next_sock.sendall(next_payload)
-            circuit_logger.info("Connecting to %s:%d" % (self.ip, self.port))
 
-            headers = self.pull(next_sock, self.client_sym.FULL_HEADER)
-            crypt_header, header, _ = Symmetric().unpack_payload(headers)
-            self.next_sym.absorb_crypto_header(crypt_header)
-            l, status = self.next_sym.decrypt_header(header)
-
-            payload = self.pull(next_sock, l)
-            # TODO: handle bad status
-            payload = self.next_sym.decrypt_body(payload)
+            circuit_logger.info("Getting response from %s:%d" % (self.ip, self.port))
+            payload, status = self._get_payload(next_sock, self.next_sym)  # TODO: handle bad status
             payload = self.client_sym.encrypt_payload(payload, 'OKOK')
             payload = self.prev_sym.encrypt_payload(payload, 'OKOK')
 
         prev_sock.sendall(payload)
 
-    def forward_payload(self):
+    def forward_payload(self, prev_sock):
+        """forward_payload
+
+        Forwards a payload to the next router/destination
+
+        Args:
+            prev_sock (socket.socket): socket connection to the previous hop
+        """
+        payload, status = self._get_payload(prev_sock, self.client_sym)  # TODO: handle bad status
+
+        next_sock = socket.socket()
+        if self.is_exit:
+            ip, self.port, payload = struct.unpack(">4sl%ds" % (len(payload) - 8), payload)
+            next_sock.connect((socket.inet_ntoa(ip), self.port))
+        else:
+            circuit_logger.info("Connecting to %s:%d" % (self.ip, self.port))
+            next_sock.connect((self.ip, self.port))
+
+        next_sock.sendall(payload)
+
+        circuit_logger.info("Getting response from %s:%d" % (self.ip, self.port))
+        if self.is_exit:
+            chunk = 'asdf'
+            next_sock.settimeout(1)
+            while len(chunk) > 0:
+                try:
+                    chunk = next_sock.recv(1024)
+                except socket.timeout:
+                    chunk = ''
+                logging.debug("Received chunk from website (%dB)" % len(chunk))
+                payload += chunk
+            next_sock.settimeout(None)
+        else:
+            payload, status = self._get_payload(next_sock, self.next_sym)  # TODO: handle bad status
+
+        payload = self.client_sym.encrypt_payload(payload, 'OKOK')
+        payload = self.prev_sym.encrypt_payload(payload, 'OKOK')
+        prev_sock.sendall(payload)
+
+    def close_circuit(self, prev_sock):
         pass
