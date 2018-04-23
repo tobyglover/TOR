@@ -6,6 +6,7 @@ import sys
 import socket
 from SocketServer import TCPServer, BaseRequestHandler
 from Crypt import Crypt
+from datetime import datetime
 from Crypto.PublicKey import RSA
 from Crypto.Random import get_random_bytes
 
@@ -86,7 +87,31 @@ class TCPHandler(BaseRequestHandler):
         self._send(struct.pack("!4sI", socket.inet_aton(to_router["ip_addr"]), to_router["daemon_port"]) + payload)
 
     def _connection_test_results(self, request):
-        pass
+        now = datetime.utcnow()
+        c = Crypt(public_key=self.server.private_key.publickey(), private_key=self.server.private_key)
+        header = c.decrypt_and_auth(request[:512])
+        start_time = header[:TIME_STR_SIZE]
+        from_router_id = header[TIME_STR_SIZE:TIME_STR_SIZE+ROUTER_ID_SIZE]
+        to_router_id = header[TIME_STR_SIZE+ROUTER_ID_SIZE:]
+
+        i = 1
+        times = [datetime_from_str(start_time)]
+        for router_id in [from_router_id, to_router_id]:
+            router = self.server.tor_routers.get(router_id, None)
+            if router is None:
+                return
+            c = Crypt(public_key=RSA.import_key(router["pub_key"]), private_key=self.server.private_key)
+            times.append(datetime_from_str(c.decrypt_and_auth(request[i * 512:(i + 1) * 512])))
+
+            i += 1
+        times.append(now)
+
+        for i in range(1, len(times)):
+            if times[i] < times[i - 1]:
+                # error, malicious or otherwise
+                return
+
+        latency = (times[2] - times[1]).total_seconds() * 1000
 
     def _unregister_router(self, request):
         router_id = request[:ROUTER_ID_SIZE]

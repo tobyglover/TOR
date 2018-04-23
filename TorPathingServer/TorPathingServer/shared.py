@@ -7,6 +7,9 @@ from Crypto.PublicKey import RSA
 def now_as_str():
     return str(datetime.utcnow())
 
+def datetime_from_str(string):
+    return datetime.strptime(string, "%Y-%m-%d %H:%M:%S.%f")
+
 def get_server_public_key():
     with open('public.pem','r') as f:
         return RSA.import_key(f.read())

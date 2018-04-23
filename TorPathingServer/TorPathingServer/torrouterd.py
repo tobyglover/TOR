@@ -32,7 +32,6 @@ class TCPHandler(BaseRequestHandler):
     def handle(self):
         payload = self.request.recv(2048)
         payload = MSG_TYPES.CONNECTION_TEST_RESULTS + append_current_time(payload, self.server.router_private_key)
-        print len(payload)
         conn = self.server._newconnection()
         conn.send(payload)
 
