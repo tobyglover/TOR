@@ -50,17 +50,22 @@ class Reporter(object):
         conn = self._newconnection()
         conn.send(struct.pack("!c%dsI" % ROUTER_ID_SIZE, MSG_TYPES.REGISTER_DAEMON, self._router_id, own_port))
 
+    def _test_connection(self, data):
+        
+
     def begin_heartbeat(self):
         t = threading.Thread(target=self._begin_heartbeat)
         t.daemon = True
         t.start()
 
     def _begin_heartbeat(self):
-        i = 0
         while True:
-            with open("test.out", "w") as f:
-                f.write(str(i) + "\n")
-            i += 1
+            conn = self._newconnection()
+            conn.send(struct.pack("!c%ds" % ROUTER_ID_SIZE, MSG_TYPES.TEST_CONNECTION, self._router_id))
+            data = conn.receive(1024)
+            if data[:4] != "NONE":
+                self._test_connection(data)
+
             time.sleep(HEARTBEAT_INTERVAL_SEC)
 
 

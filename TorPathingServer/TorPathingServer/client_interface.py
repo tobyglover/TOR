@@ -6,6 +6,8 @@ from Crypt import Crypt
 from random import shuffle
 from os import urandom
 import struct
+import multiprocessing
+import torrouterd
 
 ROUTE_INFO_SIZE = struct.calcsize(ROUTE_STRUCT_FMT)
 
@@ -74,6 +76,11 @@ class TORPathingServer(object):
         pk = RSA.import_key(pk)
         return (enc_pkt, ip, port, pk, sid, sym_key)
 
+    def _start_daemon(self, privatekey):
+        p = multiprocessing.Process(target=torrouterd.start, name="torrouterd", args=(self._server_ip, self._server_port, self._privatekey, self._router_id))
+        p.daemon = True
+        p.start()
+
     """
     Registers a new TOR router with the pathing server
 
@@ -89,6 +96,7 @@ class TORPathingServer(object):
         conn = self._newconnection()
         conn.send(struct.pack("!cI%ds" % DER_KEY_SIZE, MSG_TYPES.REGISTER_SERVER, port, privatekey.publickey().exportKey(format='DER')))
         self._router_id = conn.receive()
+        self._start_daemon(privatekey)
 
     """
     Unregisters a TOR router from the pathing server. Note that this is done automatically when the

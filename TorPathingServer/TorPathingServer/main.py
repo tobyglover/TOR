@@ -25,6 +25,7 @@ class CustomTCPServer(TCPServer, object):
         self.request_queue_size = 10
         self.private_key = self._getPrivateKey()
         self.tor_routers = {}
+        self.connection_tests = {}
         self._connections = 0
         self.rid = get_random_bytes(16)
 
@@ -55,6 +56,7 @@ class TCPHandler(BaseRequestHandler):
         self.server.tor_routers[router_id] = {"ip_addr": self.client_address[0],
                                               "port": port,
                                               "pub_key": pub_key}
+        self.server.connection_tests[router_id] = {}
         self._send(router_id)
 
     def _register_daemon(self, request):
@@ -62,11 +64,37 @@ class TCPHandler(BaseRequestHandler):
         if router_id in self.server.tor_routers:
             self.server.tor_routers[router_id]["daemon_port"] = daemon_port
 
+    def _determine_test_router(self, from_router_id):
+        pass
+
+    def _test_connection(self, request):
+        router_id = struct.unpack("!%d" % ROUTER_ID_SIZE, request)
+        to_router_id = self._determine_test_router(router_id)
+
+        if to_router_id is None:
+            self._send("NONE")
+            return
+
+        to_router = self.server.tor_routers[to_router_id]
+        c = Crypt(public_key=self.server.private_key.publickey(), private_key=self.server.private_key)
+        now = now_as_str()
+        header = c.sign_and_encrypt(now + router_id + to_router_id)
+        print len(header)
+
+        self._send(header + struct.pack("!4sI", socket.inet_aton(to_router["ip_addr"]), to_router["daemon_port"]))
+
+
+    def _connection_test_results(self, request):
+        pass
+
     def _unregister_router(self, request):
         router_id = request[:ROUTER_ID_SIZE]
-        if router_id in self.server.tor_routers and self.server.tor_routers[router_id]["ip_addr"] == self.client_address[0]:
+        if self.server.tor_routers[router_id]["ip_addr"] == self.client_address[0]:
             details = self.server.tor_routers.pop(router_id, None)
-            self._output("Deregistering router: %s:%d" % (details["ip_addr"], details["port"]))
+            self.server.connection_tests.pop(router_id, None)
+            if not details is None:
+                self._output("Deregistering router: %s:%d" % (details["ip_addr"], details["port"]))
+
 
     def _create_route(self):
         route = ""
@@ -114,6 +142,12 @@ class TCPHandler(BaseRequestHandler):
             elif request_type == MSG_TYPES.REGISTER_DAEMON:
                 self._output("Registering daemon for router")
                 self._register_daemon(request)
+            elif request_type == MSG_TYPES.TEST_CONNECTION:
+                self._output("Testing connection")
+                self._test_connection(request)
+            elif request_type == MSG_TYPES.CONNECTION_TEST_RESULTS:
+                self._output("Getting connection test results")
+                self._connection_test_results(request)
             elif request_type == MSG_TYPES.CLOSE:
                 self._output("Client exiting connection")
                 return
