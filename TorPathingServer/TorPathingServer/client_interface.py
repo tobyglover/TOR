@@ -1,86 +1,80 @@
 from shared import *
+import sys
 import socket
-import struct
 from Crypto.PublicKey import RSA
 from Crypt import Crypt
+from os import urandom
+import struct
+import multiprocessing
+import torrouterd
 
-ROUTE_INFO_SIZE = DER_KEY_SIZE + 8
+ROUTE_INFO_SIZE = struct.calcsize(ROUTE_STRUCT_FMT)
+
 
 class PathingFailed(Exception):
     pass
 
-class Connection(object):
-    def __init__(self, server_ip, server_port, private_key):
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._socket.connect((server_ip, server_port))
-        self._crypt = Crypt(private_key)
-        self._handshake(private_key)
 
-    def __del__(self):
-        self.close()
-
-    def _handshake(self, private_key):
-        self.send(private_key.publickey().exportKey(format='DER'))
-        k = self.receive(DER_KEY_SIZE)
-        self._crypt.setPublicKey(RSA.import_key(k))
-
-    def send(self, data):
-        if (self._crypt.available()):
-            data = self._crypt.sign_and_encrypt(data)
-        self._socket.sendall(data)
-
-    def receive(self, size=1024):
-        data = self._socket.recv(size)
-        if (self._crypt.available()):
-            data = self._crypt.decrypt_and_auth(data)
-        return data
-
-    def close(self):
-        self.send(MSG_TYPES.CLOSE)
-        self._socket.close()
-
-"""
-TORPathingServer
-
-Wrapper around communication between the TOR pathing server and the clients or
-routers in the network. Supports sregistering and deregistering TOR routers
-and getting a route for a client in the network.
-
-args:
-    server_ip (str): ip address of pathing server
-    server_port (int): port number of the pathing server
-"""
 class TORPathingServer(object):
-    def __init__(self, server_ip, server_port):
+    """
+    TORPathingServer
+
+    Wrapper around communication between the TOR pathing server and the clients or
+    routers in the network. Supports sregistering and deregistering TOR routers
+    and getting a route for a client in the network.
+
+    args:
+        server_ip (str): ip address of pathing server
+        server_port (int): port number of the pathing server
+    """
+
+    def __init__(self, server_ip, server_port, server_pubkey=None):
         self._server_ip = server_ip
         self._server_port = server_port
         self._router_id = None
         self._private_key = Crypt().generate_key()
+        self._server_pubkey = server_pubkey
 
     def __del__(self):
         self.unregister()
 
     def _newconnection(self):
-        return Connection(self._server_ip, self._server_port, self._private_key)
+        return Connection(self._server_ip, self._server_port, self._private_key, self._server_pubkey)
 
     def _parse_route_node(self, data):
-        (ip, port, pub_key) = struct.unpack("!4sI%ds" % DER_KEY_SIZE, data)
-        return (socket.inet_ntoa(ip), port, RSA.import_key(pub_key))
+        enc_pkt, ip, port, pk, sid, sym_key = struct.unpack(ROUTE_STRUCT_FMT, data)
+        ip = socket.inet_ntoa(ip)
+        pk = RSA.import_key(pk)
+        return enc_pkt, ip, port, pk, sid, sym_key
+
+    def _start_daemon(self, privatekey):
+        self._p = multiprocessing.Process(target=torrouterd.start, name="torrouterd",
+                                          args=(self._server_ip, self._server_port, privatekey, self._router_id),
+                                          kwargs={"server_pubkey": self._server_pubkey})
+        self._p.daemon = True
+        self._p.start()
+
+    def _stop_daemon(self):
+        if not self._p is None:
+            self._p.terminate()
 
     """
     Registers a new TOR router with the pathing server
 
     args:
         port (int): port that the router is listening on
-        publicKey (Crypto.PublicKey.RSA instance): public key for the router
+        privatekey (Crypto.PublicKey.RSA instance): private key for the router. Only the public key
+            is sent
 
     returns: None
     """
-    def register(self, port, publicKey):
+    def register(self, port, privatekey):
         assert self._router_id is None, "Error: instance is already registered with server"
         conn = self._newconnection()
-        conn.send(struct.pack("!cI%ds" % DER_KEY_SIZE, MSG_TYPES.REGISTER_SERVER, port, publicKey.exportKey(format='DER')))
+        conn.send(struct.pack("!cI%ds" % DER_KEY_SIZE, MSG_TYPES.REGISTER_SERVER, port,
+                              privatekey.publickey().exportKey(format='DER')))
         self._router_id = conn.receive()
+        self._start_daemon(privatekey)
 
     """
     Unregisters a TOR router from the pathing server. Note that this is done automatically when the
@@ -94,6 +88,7 @@ class TORPathingServer(object):
         conn = self._newconnection()
         conn.send(struct.pack("!c%ds" % len(self._router_id), MSG_TYPES.DEREGISTER_SERVER, self._router_id))
         self._router_id = None
+        self._stop_daemon()
 
     """
     Gets a new TOR route from the pathing server.
@@ -107,8 +102,9 @@ class TORPathingServer(object):
     def get_route(self):
         conn = self._newconnection()
         conn.send(struct.pack("!c", MSG_TYPES.GET_ROUTE))
-        route_data = conn.receive(2048)
-
+        route_data = conn.receive(4096)
+        if len(route_data) == 0:
+            raise PathingFailed
         i = 0
         route = []
         while (i + 1) * ROUTE_INFO_SIZE <= len(route_data):
@@ -117,3 +113,40 @@ class TORPathingServer(object):
             i += 1
 
         return route
+
+
+class TestTORPathingServer(object):
+    def __init__(self, server_ip, server_port):
+        self._server_ip = server_ip
+        self._server_port = server_port
+        self._router_id = None
+        self.private_key = Crypt().generate_key()
+        self.rid = urandom(16)
+        self.routers = []
+
+    def __del__(self):
+        self.unregister()
+
+    def register(self, port, public_key):
+        self.routers.append(("127.0.0.1", port, public_key))
+
+    def unregister(self):
+        pass
+
+    def get_route(self):
+        route = []
+        # print self.routers
+        for r in self.routers[:3]:
+            ip, port, pk = r
+            c = Crypt(public_key=pk, private_key=self.private_key)
+            sid = urandom(8)
+            sym_key = urandom(16)
+            enc_pkt = c.sign_and_encrypt("ESTB" + self.rid + sid + sym_key)
+            route.append((enc_pkt, ip, port, pk, sid, sym_key))
+
+        return route
+
+if __name__ == "__main__":
+    server = TORPathingServer(sys.argv[1], int(sys.argv[2]))
+    server.register(2100, RSA.generate(2048))
+    raw_input("press enter to quit")

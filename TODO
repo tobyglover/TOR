@@ -10,6 +10,11 @@ TODO:
  - Network engineering/load balancing
  - Add return of success to circuit establishment protocol
  - HTTPS
+ - Passing error messages on exit node & IP lookup
+ - Adding .onion DNS server
+ - Double check URL parsing
+ - Failing client request if <3 servers
+
 
 DONE:
  - Adding a protocol to close the circuit
