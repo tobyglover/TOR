@@ -65,10 +65,13 @@ class TCPHandler(BaseRequestHandler):
             self.server.tor_routers[router_id]["daemon_port"] = daemon_port
 
     def _determine_test_router(self, from_router_id):
-        pass
+        for k in self.server.tor_routers.keys():
+            if k != from_router_id and "daemon_port" in self.server.tor_routers[k]:
+                return k
+        return None
 
     def _test_connection(self, request):
-        router_id = struct.unpack("!%d" % ROUTER_ID_SIZE, request)
+        router_id = request
         to_router_id = self._determine_test_router(router_id)
 
         if to_router_id is None:
@@ -78,11 +81,9 @@ class TCPHandler(BaseRequestHandler):
         to_router = self.server.tor_routers[to_router_id]
         c = Crypt(public_key=self.server.private_key.publickey(), private_key=self.server.private_key)
         now = now_as_str()
-        header = c.sign_and_encrypt(now + router_id + to_router_id)
-        print len(header)
+        payload = c.sign_and_encrypt(now + router_id + to_router_id)
 
-        self._send(header + struct.pack("!4sI", socket.inet_aton(to_router["ip_addr"]), to_router["daemon_port"]))
-
+        self._send(struct.pack("!4sI", socket.inet_aton(to_router["ip_addr"]), to_router["daemon_port"]) + payload)
 
     def _connection_test_results(self, request):
         pass
@@ -94,7 +95,6 @@ class TCPHandler(BaseRequestHandler):
             self.server.connection_tests.pop(router_id, None)
             if not details is None:
                 self._output("Deregistering router: %s:%d" % (details["ip_addr"], details["port"]))
-
 
     def _create_route(self):
         route = ""
@@ -121,7 +121,7 @@ class TCPHandler(BaseRequestHandler):
         self._crypt.setPublicKey(RSA.import_key(request))
 
         while True:
-            request = self.request.recv(1024)
+            request = self.request.recv(4096)
             if len(request) == 0:
                 continue
             try:

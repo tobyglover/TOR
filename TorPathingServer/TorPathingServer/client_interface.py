@@ -1,4 +1,5 @@
 from shared import *
+import sys
 import socket
 import struct
 from Crypto.PublicKey import RSA
@@ -13,39 +14,6 @@ ROUTE_INFO_SIZE = struct.calcsize(ROUTE_STRUCT_FMT)
 
 class PathingFailed(Exception):
     pass
-
-
-class Connection(object):
-    def __init__(self, server_ip, server_port, private_key, server_pubkey=None):
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._socket.connect((server_ip, server_port))
-        if server_pubkey:
-            self._crypt = Crypt(private_key, server_pubkey)
-        else:
-            self._crypt = Crypt(private_key, self._getServerPublicKey())
-        self._sendPublicKey(private_key)
-
-    def __del__(self):
-        self.close()
-
-    def _sendPublicKey(self, private_key):
-        self._socket.sendall(private_key.publickey().exportKey(format='DER'))
-
-    def _getServerPublicKey(self):
-        with open('public.pem','r') as f:
-            return RSA.import_key(f.read())
-
-    def send(self, data):
-        data = self._crypt.sign_and_encrypt(data)
-        self._socket.sendall(data)
-
-    def receive(self, size=1024):
-        data = self._crypt.decrypt_and_auth(self._socket.recv(size))
-        return data
-
-    def close(self):
-        self.send(MSG_TYPES.CLOSE)
-        self._socket.close()
 
 
 class TORPathingServer(object):
@@ -81,9 +49,13 @@ class TORPathingServer(object):
         return enc_pkt, ip, port, pk, sid, sym_key
 
     def _start_daemon(self, privatekey):
-        p = multiprocessing.Process(target=torrouterd.start, name="torrouterd", args=(self._server_ip, self._server_port, self._privatekey, self._router_id))
-        p.daemon = True
-        p.start()
+        self._p = multiprocessing.Process(target=torrouterd.start, name="torrouterd", args=(self._server_ip, self._server_port, privatekey, self._router_id))
+        self._p.daemon = True
+        self._p.start()
+
+    def _stop_daemon(self):
+        if not self._p is None:
+            self._p.terminate()
 
     """
     Registers a new TOR router with the pathing server
@@ -114,6 +86,7 @@ class TORPathingServer(object):
         conn = self._newconnection()
         conn.send(struct.pack("!c%ds" % len(self._router_id), MSG_TYPES.DEREGISTER_SERVER, self._router_id))
         self._router_id = None
+        self._stop_daemon()
 
     """
     Gets a new TOR route from the pathing server.
@@ -178,3 +151,8 @@ class TestTORPathingServer(object):
             route.append((enc_pkt, ip, port, pk, sid, sym_key))
 
         return route
+
+if __name__ == "__main__":
+    server = TORPathingServer(sys.argv[1], int(sys.argv[2]))
+    server.register(2100, RSA.generate(2048))
+    raw_input("press enter to quit")

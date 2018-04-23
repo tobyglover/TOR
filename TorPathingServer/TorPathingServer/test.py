@@ -12,7 +12,7 @@ def test():
 
     for (port, key) in router_config:
         router = getServer()
-        router.register(port, key.publickey())
+        router.register(port, key)
         routers.append(router)
 
     route = getServer().get_route()
@@ -23,6 +23,7 @@ def test():
             if port == router_port and key == router_key.publickey():
                 count_correct += 1
 
+    time.sleep(1)
     assert count_correct == len(router_config)
     routers.pop()
     for router in routers:

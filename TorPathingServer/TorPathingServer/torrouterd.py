@@ -7,32 +7,35 @@ import threading
 import struct
 import socket
 from SocketServer import TCPServer, BaseRequestHandler
-from client_interface import Connection
 from Crypt import Crypt
 from shared import *
 
+CONN_KEY = Crypt().generate_key()
+
+def append_current_time(payload, private_key):
+    c = Crypt(public_key=get_server_public_key(), private_key=private_key)
+    return payload + c.sign_and_encrypt(now_as_str())
+
 class CustomTCPServer(TCPServer, object):
-    def __init__(self, server_address, request_handler, router_private_key):
+    def __init__(self, server_address, request_handler, pathing_server_ip, pathing_server_port, router_private_key):
         super(CustomTCPServer, self).__init__(server_address, request_handler)
         self.timeout = 3
         self.request_queue_size = 10
         self.router_private_key = router_private_key
-        self.conn_private_key = Crypt().generate_key()
+        self._pathing_server_ip = pathing_server_ip
+        self._pathing_server_port = pathing_server_port
 
     def _newconnection(self):
-        return Connection(self._server_ip, self._server_port, self._private_key)
+        return Connection(self._pathing_server_ip, self._pathing_server_port, CONN_KEY)
 
 class TCPHandler(BaseRequestHandler):
-    def _send(self, message):
-        data = self._crypt.sign_and_encrypt(message)
-        self.request.sendall(data)
-
-    def setup(self):
-        self._crypt = Crypt(self.server.private_key)
-        self._id = self.server.getUniqueConnectionId()
-
     def handle(self):
-        request = self.request.recv(DER_KEY_SIZE)
+        payload = self.request.recv(2048)
+        payload = MSG_TYPES.CONNECTION_TEST_RESULTS + append_current_time(payload, self.server.router_private_key)
+        print len(payload)
+        conn = self.server._newconnection()
+        conn.send(payload)
+
 
 class Reporter(object):
     def __init__(self, server_ip, server_port, router_private_key, router_id, own_port):
@@ -40,18 +43,28 @@ class Reporter(object):
         self._server_port = server_port
         self._router_key = router_private_key
         self._router_id = router_id
-        self._conn_key = Crypt().generate_key()
         self._register(own_port)
 
     def _newconnection(self):
-        return Connection(self._server_ip, self._server_port, self._conn_key)
+        return Connection(self._server_ip, self._server_port, CONN_KEY)
 
     def _register(self, own_port):
         conn = self._newconnection()
         conn.send(struct.pack("!c%dsI" % ROUTER_ID_SIZE, MSG_TYPES.REGISTER_DAEMON, self._router_id, own_port))
 
     def _test_connection(self, data):
-        
+        struct_fmt = "!4sI"
+        info_size = struct.calcsize(struct_fmt)
+        payload = data[info_size:]
+        (ip_addr, port) = struct.unpack(struct_fmt, data[:info_size])
+        ip_addr = socket.inet_ntoa(ip_addr)
+
+        payload = append_current_time(payload, self._router_key)
+
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect((ip_addr, port))
+        s.sendall(payload)
+        s.close()
 
     def begin_heartbeat(self):
         t = threading.Thread(target=self._begin_heartbeat)
@@ -66,13 +79,14 @@ class Reporter(object):
             if data[:4] != "NONE":
                 self._test_connection(data)
 
+            conn.close()
             time.sleep(HEARTBEAT_INTERVAL_SEC)
 
 
-def start(server_ip, server_port, router_private_key, router_id):
-    server = CustomTCPServer(("0.0.0.0", 0), TCPHandler, router_private_key)
+def start(pathing_server_ip, pathing_server_port, router_private_key, router_id):
+    server = CustomTCPServer(("0.0.0.0", 0), TCPHandler, pathing_server_ip, pathing_server_port, router_private_key)
     port = server.server_address[1]
-    r = Reporter(server_ip, server_port, router_private_key, router_id, port)
+    r = Reporter(pathing_server_ip, pathing_server_port, router_private_key, router_id, port)
     r.begin_heartbeat()
     server.serve_forever()
 
