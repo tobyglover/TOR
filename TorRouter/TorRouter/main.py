@@ -70,7 +70,8 @@ class MyTCPHandler(BaseRequestHandler):
 
         router_logger.debug("Waiting for header...")
         header = self.pull(self.request, self.HEADER_SIZE)
-        router_logger.debug("Pulled header (%dB) %s" % (len(header), repr(header.encode('hex')[:8])))
+        router_logger.debug("Pulled header (%dB) %s" %
+                            (len(header), repr(header.encode('hex')[:8])))
 
         try:
             method, circ = self.server.cdb.get(header, self.server.crypt)
@@ -85,6 +86,7 @@ class MyTCPHandler(BaseRequestHandler):
         else:
             router_logger.info("Handling request")
             circ.forward_payload(self.request)
+            router_logger.info("Sucessfully returned request")
 
     def make_next_hop(self, next_hop, data):
         router_logger.info("Sending establishment circuit to next router")

@@ -83,6 +83,8 @@ class ClientCircuit(Circuit):
 
             self.prev_sym = Symmetric(self.prev_symkey)
             self.next_sym = Symmetric(self.next_symkey)
+            if self.is_exit:
+                circuit_logger.debug("Initialized exit node! *****")
         else:
             circuit_logger.debug("Initializing new ClientCircuit")
 
@@ -124,8 +126,6 @@ class ClientCircuit(Circuit):
         der_len = Crypt().PUB_DER_LEN
         raw_clientkey, body = body[:der_len], body[der_len:]
         self.pubkey = RSA.importKey(raw_clientkey)
-        circuit_logger.debug("body: %d, body[40:]: %d, body-40: %d, m(l,0): %d" % (len(body), len(body[40:]), len(body) - 40,
-                                                                                   max((len(body) - 40), 0)))
         self.prev_symkey, self.next_symkey, next_ip, self.port, next_payload = \
             struct.unpack(">16s16s4sl%ds" % (max((len(body) - 40), 0)), body)
         self.ip = socket.inet_ntoa(next_ip)
@@ -134,6 +134,7 @@ class ClientCircuit(Circuit):
 
         if self.port == -1:
             self.is_exit = True
+            circuit_logger.debug("Built exit node! *****")
             payload = self.client_sym.encrypt_payload('', 'OKOK')
             payload = self.prev_sym.encrypt_payload(payload, 'OKOK')
         else:
@@ -165,21 +166,28 @@ class ClientCircuit(Circuit):
         next_sock = socket.socket()
         if self.is_exit:
             ip, self.port, payload = struct.unpack(">4sl%ds" % (len(payload) - 8), payload)
-            next_sock.connect((socket.inet_ntoa(ip), self.port))
+            self.ip = socket.inet_ntoa(ip)
+            next_sock.connect((self.ip, self.port))
+            circuit_logger.info("Connecting to target server %s:%d" % (self.ip, self.port))
         else:
-            circuit_logger.info("Connecting to %s:%d" % (self.ip, self.port))
+            circuit_logger.info("Connecting to next router %s:%d" % (self.ip, self.port))
             next_sock.connect((self.ip, self.port))
 
         next_sock.sendall(payload)
 
         circuit_logger.info("Getting response from %s:%d" % (self.ip, self.port))
         if self.is_exit:
+            payload = ''
             chunk = 'asdf'
             next_sock.settimeout(1)
             while len(chunk) > 0:
                 try:
                     chunk = next_sock.recv(1024)
                 except socket.timeout:
+                    chunk = ''
+                except Exception:
+                    circuit_logger.warning("Received exception while pulling")
+                    payload = ''
                     chunk = ''
                 logging.debug("Received chunk from website (%dB)" % len(chunk))
                 payload += chunk
