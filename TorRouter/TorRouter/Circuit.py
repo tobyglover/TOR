@@ -3,28 +3,27 @@ import sys
 import logging
 from Crypt import Crypt, Symmetric
 from Crypto.PublicKey import RSA
+import socket
+import struct
 
-
+circuit_logger = logging.getLogger("Circuit")
+circuit_logger.setLevel(logging.DEBUG)
+ch = logging.StreamHandler(sys.stdout)
+ch.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+circuit_logger.addHandler(ch)
 
 
 class Circuit(object):
 
-    def __init__(self, cid, is_pf, prev_symkey=None, payload=None, pubkey=None):
-        self.cid = cid.encode('hex')
-        self.pubkey = pubkey
+    def __init__(self, cid, is_pf):
+        self.cid = cid
         self.is_pf = is_pf
+        self.pubkey = None
 
-    def to_string(self):
-        return "THIS IS THE STRING"
-
-    def verify_header(self, header):
-        pass
-
-    def forward_payload(self):
-        pass
-
-    def forward_response(self):
-        pass
+    def export(self):
+        raise NotImplemented
 
     def auth_header(self, header, hsh, crypt):
         """auth_header
@@ -36,27 +35,136 @@ class Circuit(object):
         Raises:
             ValueError: if authentication fails
         """
+        circuit_logger.debug("Authenticating header...")
         crypt.setPublicKey(self.pubkey)
         crypt.auth(header, hsh)
+        circuit_logger.debug("Header authenticated!")
 
 
 class PFCircuit(Circuit):
 
     def __init__(self, cid, from_string=None, pubkey=None):
+        """PFCircuit
+
+        Interface to a Pathfinding Circuit
+
+        Args:
+            cid (str): circuit ID of the Pathfinding Circuit
+            from_string (str): stored SQL string to import public key from
+            pubkey (RSA.RsaKey): public RSA key of Pathfinding Server
+        """
         super(PFCircuit, self).__init__(cid, True)
 
         if from_string:
-            self.pf_pubkey = RSA.importKey(from_string)
+            circuit_logger.debug("Building PFCircuit from string")
+            self.pubkey = RSA.importKey(from_string)
         else:
-            self.pf_pubkey = pubkey
+            circuit_logger.debug("Building PFCircuit from args")
+            self.pubkey = RSA.importKey(pubkey)
+
+    def export(self):
+        circuit_logger.debug("Exporting PFCircuit")
+        return self.pubkey.exportKey()
 
 
 class ClientCircuit(Circuit):
 
-    def __init__(self, cid, from_string=None, prev_symkey=None):
+    def __init__(self, cid, client_symkey, crypt, from_string=None):
         super(ClientCircuit, self).__init__(cid, False)
+        self.client_symkey = client_symkey
+        self.crypt = crypt
 
+        if from_string:
+            circuit_logger.debug("Initializing ClientCircuit from string")
+            self.is_exit, public_key, ip, self.port, self.prev_symkey, self.next_symkey = \
+                struct.unpack('?%ds4sl16s16s' % self.crypt.PUB_DER_LEN, from_string)
+            self.crypt.public_key = RSA.importKey(public_key)
+            self.ip = socket.inet_ntoa(ip)
 
+            self.prev_sym = Symmetric(self.prev_symkey)
+            self.next_sym = Symmetric(self.next_symkey)
+        else:
+            circuit_logger.debug("Initializing new ClientCircuit")
 
+        self.client_sym = Symmetric(self.client_symkey, cid, debug=True)
+        self.pubkey = crypt.public_key
 
+    def export(self):
+        circuit_logger.debug("Exporting ClientCircuit")
+        return struct.pack('?%ds4sl16s16s' % self.crypt.PUB_DER_LEN, self.is_exit,
+                           self.pubkey.exportKey('DER'), socket.inet_aton(self.ip),
+                           self.port, self.prev_symkey, self.next_symkey)
 
+    @staticmethod
+    def pull(sock, length):
+        circuit_logger.debug("Pulling message of length %d" % length)
+        message = ''
+        while len(message) < length:
+            message += sock.recv(length - len(message))
+        return message
+
+    def build_circuit(self, prev_sock):
+        """build_circuit
+
+        Builds a circuit from the client initialization
+
+        Args:
+            prev_sock (socket.socket): socket connection to the previous hop
+        """
+        headers = self.pull(prev_sock, self.client_sym.FULL_HEADER)
+        circuit_logger.debug("Receiving header '%s...%s' (%dB)" % (headers.encode('hex')[:8], headers.encode('hex')[-8:], len(headers)))
+        crypt_header, header, body = self.client_sym.unpack_payload(headers)
+        # crypt_header, header, _ = self.client_sym.unpack_payload(headers)
+        circuit_logger.debug("Receiving heade2 '%s...%s' (%dB)" % (crypt_header.encode('hex')[:8], header.encode('hex')[-8:], len(crypt_header) + len(header)))
+        self.client_sym.absorb_crypto_header(crypt_header)
+        l, status = self.client_sym.decrypt_header(header)
+
+        # crypt_header, header, body = c1.unpack_payload(packet)
+        #
+        # c2 = Symmetric(key, sid)
+        # c2.absorb_crypto_header(crypt_header)
+        #
+        # print c2.decrypt_header(header)
+        # print repr(c2.decrypt_body(body))
+        body = self.pull(prev_sock, l)
+        body = self.client_sym.decrypt_body(body)
+
+        der_len = Crypt().PUB_DER_LEN
+        raw_clientkey, body = body[:der_len], body[der_len:]
+        self.pubkey = RSA.importKey(raw_clientkey)
+        circuit_logger.debug("body: %d, body[40:]: %d, body-40: %d, m(l,0): %d" % (len(body), len(body[40:]), len(body) - 40,
+                                                                                   max((len(body) - 40), 0)))
+        self.prev_symkey, self.next_symkey, next_ip, self.port, next_payload = \
+            struct.unpack(">16s16s4sl%ds" % (max((len(body) - 40), 0)), body)
+        self.ip = socket.inet_ntoa(next_ip)
+
+        self.prev_sym = Symmetric(self.prev_symkey)
+
+        if self.port == -1:
+            self.is_exit = True
+            payload = self.client_sym.encrypt_payload('', 'OKOK')
+            payload = self.prev_sym.encrypt_payload(payload, 'OKOK')
+        else:
+            self.is_exit = False
+            self.next_sym = Symmetric(self.next_symkey)
+
+            next_sock = socket.socket()
+            next_sock.connect((self.ip, self.port))
+            next_sock.sendall(next_payload)
+            circuit_logger.info("Connecting to %s:%d" % (self.ip, self.port))
+
+            headers = self.pull(next_sock, self.client_sym.FULL_HEADER)
+            crypt_header, header, _ = Symmetric().unpack_payload(headers)
+            self.next_sym.absorb_crypto_header(crypt_header)
+            l, status = self.next_sym.decrypt_header(header)
+
+            payload = self.pull(next_sock, l)
+            # TODO: handle bad status
+            payload = self.next_sym.decrypt_body(payload)
+            payload = self.client_sym.encrypt_payload(payload, 'OKOK')
+            payload = self.prev_sym.encrypt_payload(payload, 'OKOK')
+
+        prev_sock.sendall(payload)
+
+    def forward_payload(self):
+        pass

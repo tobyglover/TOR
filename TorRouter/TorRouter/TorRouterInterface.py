@@ -4,6 +4,16 @@ import socket
 from os import urandom
 from Crypto.PublicKey import RSA
 import struct
+import sys
+
+
+tri_logger = logging.getLogger("TorRouterInterface")
+tri_logger.setLevel(logging.DEBUG)
+ch = logging.StreamHandler(sys.stdout)
+ch.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+tri_logger.addHandler(ch)
 
 
 class CircuitFailed(Exception):
@@ -46,7 +56,7 @@ class TorRouterInterface(object):
         self.client_key = Crypt().generate_key()
         self.crypt = Crypt(public_key=router_pubkey, private_key=self.client_key, name="interface%d" % port,
                            debug=True)
-        self.client_sym = Symmetric(self.client_symkey)
+        self.client_sym = Symmetric(self.client_symkey, sid)
         self.resp_sym = Symmetric(self.resp_symkey)
 
     def _keep_alive(self):
@@ -105,17 +115,28 @@ class TorRouterInterface(object):
 
         payload = self.pkt
         if self.is_exit:
-            header = self.client_key.publickey().exportKey("DER") + prev_symkey
+            header = self.client_key.publickey().exportKey("DER")
+            header += struct.pack(">16s16s4sl", prev_symkey, "\x00" * 16, "\x00" * 4, -1)
+            # header = struct.pack(">16")
             payload += self.client_sym.encrypt_payload(header, "EXIT")
         else:
             self.next_symkey = self.client_sym.generate()
+            header = self.client_key.publickey().exportKey("DER")
             next_payload = self.next_router.establish_circuit(self.next_symkey)
-            header = self.client_key.publickey().exportKey("DER") + self.prev_symkey + self.next_symkey + next_payload
-            payload += self.client_sym.encrypt_payload(header, "ESTB")
+            body = struct.pack(">16s16s4sL%ds" % len(next_payload), self.prev_symkey,
+                                  self.next_symkey, socket.inet_aton(self.next_router.ipp[0]),
+                                  self.next_router.ipp[1], next_payload)
+            # print len(body)
+            header += body
+            p2 = self.client_sym.encrypt_payload(header, "ESTB")
+            payload += p2
+            tri_logger.debug("Sending header '%s...%s'" % (p2.encode('hex')[:8],
+                                                       p2.encode('hex')[self.client_sym.FULL_HEADER - 8:self.client_sym.FULL_HEADER]))
 
         if not self.is_entry:
             return payload
 
+        tri_logger.info("Sending payload to %s:%d" % self.ipp)
         self._send(payload)
         response = self._recv()
         self.peel_onion(response)
