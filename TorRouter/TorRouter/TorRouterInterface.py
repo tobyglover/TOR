@@ -8,13 +8,50 @@ import sys
 from threading import Lock
 
 
-tri_logger = logging.getLogger("TorRouterInterface")
-tri_logger.setLevel(logging.DEBUG)
-ch = logging.StreamHandler(sys.stdout)
-ch.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-ch.setFormatter(formatter)
-tri_logger.addHandler(ch)
+# tri_logger = logging.getLogger("TorRouterInterface")
+# tri_logger.setLevel(logging.DEBUG)
+# if not tri_logger.handlers:
+#     ch = logging.StreamHandler(sys.stdout)
+#     ch.setLevel(logging.DEBUG)
+#     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+#     ch.setFormatter(formatter)
+#     tri_logger.addHandler(ch)
+
+
+class Onion(object):
+
+    def __init__(self, sid, crypt, next_onion=None):
+        self.sid = sid
+        self.crypt = crypt
+        self.client_symkey = Symmetric.generate()
+        self.client_sym = Symmetric(self.client_symkey, sid)
+        self.next_onion = next_onion
+
+    def wrap(self, pkt, status):
+        payload = self.crypt.sign_and_encrypt("CLNT" + self.sid + self.client_symkey)
+
+        if not self.next_onion:
+            payload += self.client_sym.encrypt_payload(pkt, status)
+        else:
+            next_request = self.next_onion.wrap(pkt, status)
+            payload += self.client_sym.encrypt_payload(next_request, status)
+
+        return payload
+
+    def unwrap(self, onion):
+        crypt_header, header, body = self.client_sym.unpack_payload(onion)
+        self.client_sym.absorb_crypto_header(crypt_header)
+        l, status = self.client_sym.decrypt_header(header)
+
+        if status != "OKOK":
+            raise CircuitFailed
+
+        logging.debug("PO - Status: %s, len: %d wanted, %d recvd" % (status, l, len(body)))
+        body = self.client_sym.decrypt_body(body)
+
+        if not self.next_onion:
+            return body
+        return self.next_onion.unwrap(body)
 
 
 class CircuitFailed(Exception):
@@ -26,7 +63,8 @@ class TorRouterInterface(object):
     CT_BLOCK_SIZE = 256
     HEADER_SIZE = 2 * CT_BLOCK_SIZE
 
-    def __init__(self, (pkt, ip, port, router_pubkey, sid, symkey), next_router=None, is_entry=False):
+    def __init__(self, (pkt, ip, port, router_pubkey, sid, symkey),
+                 next_router=None, is_entry=False):
         """TorRouterInterface
 
         Interface to Tor Router circuit
@@ -49,18 +87,17 @@ class TorRouterInterface(object):
         self.prev_symkey = None
 
         self.next_router = next_router
-        self.s = socket.socket()
 
         self.is_entry = is_entry
         self.is_exit = False if next_router else True
 
         self.client_key = Crypt().generate_key()
-        self.crypt = Crypt(public_key=router_pubkey, private_key=self.client_key, name="interface%d" % port,
-                           debug=True)
+        self.crypt = Crypt(public_key=router_pubkey, private_key=self.client_key,
+                           name="interface%d" % port, debug=True)
         self.client_sym = Symmetric(self.client_symkey, sid)
-        self.resp_sym = Symmetric(self.resp_symkey)
 
         self.db_mutex = Lock()
+        self.established = False
 
     def lock_interface(func):
         """function wrapper for functions that require db access"""
@@ -88,27 +125,24 @@ class TorRouterInterface(object):
         pass # TODO: add keep alive
 
     def _connect(self):
-        self.s = socket.socket()
-        self.s.connect(self.ipp)
+        s = socket.socket()
+        s.connect(self.ipp)
+        return s
 
-    def _send(self, payload):
-        logging.info("Sending packet")
-        self._connect()
-        self.s.sendall(payload)
-
-    def _pull(self, length):
+    def _pull(self, s, length):
         message = ''
         while len(message) < length:
-            message += self.s.recv(length - len(message))
+            message += s.recv(length - len(message))
         return message
 
-    def _recv(self):
-        headers = self._pull(self.client_sym.CRYPT_HEADER_LEN + self.client_sym.HEADER_LEN)
-        crypt_header, header, _ = self.resp_sym.unpack_payload(headers)
+    def _recv(self, s):
+        resp_sym = Symmetric(self.resp_symkey)
+        headers = self._pull(s, resp_sym.CRYPT_HEADER_LEN + resp_sym.HEADER_LEN)
+        crypt_header, header, _ = resp_sym.unpack_payload(headers)
 
-        self.resp_sym.absorb_crypto_header(crypt_header)
-        l, status = self.resp_sym.decrypt_header(header)
-        return self.resp_sym.decrypt_body(self._pull(l))
+        resp_sym.absorb_crypto_header(crypt_header)
+        l, status = resp_sym.decrypt_header(header)
+        return resp_sym.decrypt_body(self._pull(s, l))
 
     def peel_onion(self, onion):
         crypt_header, header, body = self.client_sym.unpack_payload(onion)
@@ -152,22 +186,28 @@ class TorRouterInterface(object):
             header += struct.pack(">16s16s4sL%ds" % len(next_payload), self.prev_symkey,
                                   self.next_symkey, socket.inet_aton(self.next_router.ipp[0]),
                                   self.next_router.ipp[1], next_payload)
-            # print len(body)
-            # header += body
-            # p2 =
             payload += self.client_sym.encrypt_payload(header, "ESTB")
-            # tri_logger.debug("Sending header '%s...%s'" % (p2.encode('hex')[:8],
-            #                                            p2.encode('hex')[self.client_sym.FULL_HEADER - 8:self.client_sym.FULL_HEADER]))
 
         if not self.is_entry:
             return payload
 
-        tri_logger.info("Sending payload to %s:%d" % self.ipp)
-        self._send(payload)
-        response = self._recv()
+        # tri_logger.info("Sending payload to %s:%d" % self.ipp)
+        s = self._connect()
+        s.sendall(payload)
+        # self._send(payload)
+        response = self._recv(s)
+        s.close()
         self.peel_onion(response)
 
-    @lock_interface
+        self.established = True
+
+    # @lock_interface
+    def build_onion(self):
+        if self.is_exit:
+            return Onion(self.sid, self.crypt)
+        return Onion(self.sid, self.crypt, self.next_router.build_onion())
+
+    # @lock_interface
     def make_request(self, url, request):
         """make_request
 
@@ -184,32 +224,25 @@ class TorRouterInterface(object):
             CircuitFailed: If connection to circuit failed
         """
 
+        if not self.established:
+            raise CircuitFailed
+
         url_port = url.split(":")
         ip = socket.gethostbyname(url_port[0])
         port = int(url_port[1]) if len(url_port) == 2 else 80
 
-        # generate new client symkey
-        self.client_symkey = urandom(16)
-        self.client_sym = Symmetric(self.client_symkey, self.sid)
+        onion = self.build_onion()
 
-        payload = self.crypt.sign_and_encrypt("CLNT" + self.sid + self.client_symkey)
-        if self.is_exit:
-            # tri_logger.debug("Payload '%s...%s'", payload.encode("hex")[:8], payload.encode("hex"[-8:]))
-            next_request = struct.pack(">4sl%ds" % len(request), socket.inet_aton(ip), port, request)
-            # port_bs = struct.pack("!I", port)
-            # payload += self.client_sym.encrypt_payload(socket.inet_aton(ip) + port_bs + request, "SEND")
-            payload += self.client_sym.encrypt_payload(next_request, "SEND")
-        else:
-            next_request = self.next_router.make_request(url, request)
-            payload += self.client_sym.encrypt_payload(next_request, "SEND")
-
-        if not self.is_entry:
-            return payload
+        exit_pkt = struct.pack(">4sl%ds" % len(request), socket.inet_aton(ip), port, request)
+        payload = onion.wrap(exit_pkt, "SEND")
 
         logging.info("Requesting %s:%d" % (ip, port))
-        self._send(payload)
-        response = self._recv()
-        return self.peel_onion(response)
+        s = self._connect()
+        s.send(payload)
+
+        response = self._recv(s)
+        s.close()
+        return onion.unwrap(response)
 
     @lock_interface
     def close_circuit(self):
@@ -221,23 +254,20 @@ class TorRouterInterface(object):
             CircuitFailed: If connection to circuit failed
         """
         # generate new client symkey
-        self.client_symkey = urandom(16)
-        self.client_sym = Symmetric(self.client_symkey, self.sid)
+        # self.client_symkey = urandom(16)
+        # self.client_sym = Symmetric(self.client_symkey, self.sid)
 
-        payload = self.crypt.sign_and_encrypt("CLNT" + self.sid + self.client_symkey)
-        if self.is_exit:
-            payload += self.client_sym.encrypt_payload("", "EXIT")
-        else:
-            next_request = self.next_router.close_circuit()
-            payload += self.client_sym.encrypt_payload(next_request, "EXIT")
-
-        if not self.is_entry:
-            return payload
+        onion = self.build_onion()
+        payload = onion.wrap("", "EXIT")
 
         logging.info("Closing circuit")
-        self._send(payload)
-        response = self._recv()
-        return self.peel_onion(response)
+        s = self._connect()
+        s.sendall(payload)
+
+        response = self._recv(s)
+        s.close()
+        self.established = False
+        return onion.unwrap(response)
 
 
 class TestTorRouterInterface(object):

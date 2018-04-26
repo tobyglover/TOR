@@ -6,7 +6,7 @@ TOR router
 """
 import socket
 from socket import timeout
-from SocketServer import TCPServer, BaseRequestHandler
+from SocketServer import TCPServer, BaseRequestHandler, ThreadingMixIn
 import argparse
 from Crypto.PublicKey import RSA
 from TorPathingServer import TORPathingServer
@@ -35,8 +35,9 @@ def parse_args():
     args = parser.parse_args()
     return args.pip, args.pport, args.pubkey, args.cdb, args.port
 
+# class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
-class CustomTCPServer(TCPServer, object):
+class CustomTCPServer(ThreadingMixIn, TCPServer, object):
     def __init__(self, server_address, cdb, raw_pubkey, request_handler):
         router_logger.info("Setting up server...")
         super(CustomTCPServer, self).__init__(server_address, request_handler)
