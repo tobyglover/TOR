@@ -12,22 +12,22 @@ import sys
 
 
 crypt_logger = logging.getLogger("Crypt")
-ch = logging.StreamHandler(sys.stdout)
 crypt_logger.setLevel(logging.DEBUG)
+ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 ch.setFormatter(formatter)
 crypt_logger.addHandler(ch)
 
 sym_logger = logging.getLogger("Symmetric")
-ch = logging.StreamHandler(sys.stdout)
 sym_logger.setLevel(logging.DEBUG)
+ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 ch.setFormatter(formatter)
 sym_logger.addHandler(ch)
 
-MAX_MSG_LEN = 214 # determined manually for RSA2048 key, padding with PKCS1_OAEP
+MAX_MSG_LEN = 214  # determined manually for RSA2048 key, padding with PKCS1_OAEP
 KEY_SIZE = 2048
 
 

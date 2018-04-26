@@ -16,10 +16,12 @@ import sys
 from CircuitDatabase import CircuitDatabase, CircuitNotFound, BadMethod
 from Circuit import PFCircuit, ClientCircuit
 
+# logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
 router_logger = logging.getLogger("TorRouter")
-router_logger.setLevel(logging.DEBUG)
-ch = logging.StreamHandler(sys.stdout)
-ch.setLevel(logging.DEBUG)
+router_logger.setLevel(logging.INFO)
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 ch.setFormatter(formatter)
 router_logger.addHandler(ch)
@@ -42,7 +44,7 @@ class CustomTCPServer(ThreadingMixIn, TCPServer, object):
         router_logger.info("Setting up server...")
         super(CustomTCPServer, self).__init__(server_address, request_handler)
         self.key = Crypt().generate_key()
-        self.crypt = Crypt(self.key, debug=True)
+        self.crypt = Crypt(self.key)
         self.cdb = CircuitDatabase(db_path=cdb, rid='\x00' * 8, raw_pubkey=raw_pubkey)
         router_logger.info("Server running")
 
@@ -53,7 +55,7 @@ class MyTCPHandler(BaseRequestHandler):
     DER_LEN = len(Crypt().generate_key().publickey().exportKey(format='DER'))
 
     def setup(self):
-        router_logger.info("Setting up TCPHandler")
+        # router_logger.info("Setting up TCPHandler")
         self.exit = False
         self.next_sock = None
         self.client_crypt = None

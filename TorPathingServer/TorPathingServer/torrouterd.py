@@ -98,7 +98,10 @@ def start(pathing_server_ip, pathing_server_port, router_private_key, router_id,
     port = server.server_address[1]
     r = Reporter(pathing_server_ip, pathing_server_port, router_private_key, router_id, port, server_pubkey)
     r.begin_heartbeat()
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        return
 
 
 def main():
