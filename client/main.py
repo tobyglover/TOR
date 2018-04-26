@@ -9,15 +9,16 @@ from Crypt import Crypt
 from Crypto.PublicKey import RSA
 import thread
 
+# logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 client_logger = logging.getLogger("Client")
-if not client_logger.handlers:
-    ch = logging.StreamHandler(sys.stdout)
-    client_logger.setLevel(logging.DEBUG)
-    ch.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    ch.setFormatter(formatter)
-    client_logger.addHandler(ch)
+client_logger.setLevel(logging.INFO)
+# if not client_logger.handlers:
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+client_logger.addHandler(ch)
 
 
 def parse_args():
@@ -42,19 +43,9 @@ class TorProxy(BaseHTTPRequestHandler):
         return url.split('/')[0]
 
     def forward_request(self):
-        # return
         try:
             _, url, _ = self.raw_requestline.split(' ')
             url = self.clean_url(url)
-            # print "*" * 20, url, self.raw_requestline
-            # print "getting host"
-            # print self.headers.dict
-            # print self.raw_requestline
-            # url = self.headers.dict['host']
-            # print url
-            # headers = str(self.headers)
-            # path = '/'.join(str(self.path).split("/")[3:])  # todo: do this better
-            # request = "%s /%s %s\r\n%s\r\n" % (method, path, self.protocol_version, headers)
             client_logger.info("Sending request")
             resp = tor_interface.make_request(url, self.raw_requestline + str(self.headers) + "\r\n")
             client_logger.info("Returning request...")
@@ -66,45 +57,34 @@ class TorProxy(BaseHTTPRequestHandler):
 
     def do_CONNECT(self):
         client_logger.info("Handling CONNECT")
-        thread.start_new_thread(self.forward_request, ())
-        # self.forward_request()
+        self.forward_request()
 
     def do_DELETE(self):
         client_logger.info("Handling DELETE")
-        thread.start_new_thread(self.forward_request, ())
-        # self.forward_request()
+        self.forward_request()
 
     def do_GET(self):
-        # self.send_response(200)
-        # self.end_headers()
-        # self.wfile.write("hello world!\n" * 500)
         client_logger.info("Handling GET")
-        # thread.start_new_thread(self.forward_request, ())
         self.forward_request()
 
     def do_HEAD(self):
         client_logger.info("Handling HEAD")
-        # thread.start_new_thread(self.forward_request, ())
         self.forward_request()
 
     def do_OPTIONS(self):
         client_logger.info("Handling OPTIONS")
-        # thread.start_new_thread(self.forward_request, ())
         self.forward_request()
 
     def do_PATCH(self):
         client_logger.info("Handling PATCH")
-        # thread.start_new_thread(self.forward_request, ())
         self.forward_request()
 
     def do_POST(self):
         client_logger.info("Handling POST")
-        # thread.start_new_thread(self.forward_request, ())
         self.forward_request()
 
     def do_PUT(self):
         client_logger.info("Handling PUT")
-        # thread.start_new_thread(self.forward_request, ())
         self.forward_request()
 
 
@@ -115,45 +95,25 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 class TorClient(object):
 
-    def __init__(self, port, p_ip, p_port, pubkey, test):
-        self.test = test
-        if test:
-            self.path_server = TestTORPathingServer(p_ip, p_port)
-        else:
-            self.path_server = TORPathingServer(p_ip, p_port, pubkey)
+    def __init__(self, port, p_ip, p_port, pubkey):
+        self.path_server = TORPathingServer(p_ip, p_port, pubkey)
         self.has_route = False
         client_logger.info("Initializing TorProxy server")
         self.tp = ThreadedHTTPServer(('localhost', port), TorProxy)
-        # self.tp = HTTPServer(('localhost', port), TorProxy)
 
     def establish_path(self):
         global tor_interface
 
         # TODO: stale path
         if not self.has_route:
-            if self.test:
-                rk1 = Crypt().generate_key()
-                rk2 = Crypt().generate_key()
-                rk3 = Crypt().generate_key()
-                spk = self.path_server.private_key.publickey()
-                self.path_server.register(1, rk1.publickey())
-                self.path_server.register(2, rk2.publickey())
-                self.path_server.register(3, rk3.publickey())
             route = self.path_server.get_route()
-            if self.test:
-                # print "test"
-                # print route
-                tr3 = TestTorRouterInterface(route[2], is_exit=True, router_key=rk3, server_pubkey=spk)
-                tr2 = TestTorRouterInterface(route[1], tr3, router_key=rk2, server_pubkey=spk)
-                tor_interface = TestTorRouterInterface(route[0], tr2, is_entry=True, router_key=rk1, server_pubkey=spk)
-                # print "made"
-            else:
-                client_logger.debug("Route %s:%d -> %s:%d -> %s:%d" % (route[0][1], route[0][2],
-                                                                       route[1][1], route[1][2],
-                                                                       route[2][1], route[2][2]))
-                tr3 = TorRouterInterface(route[2])
-                tr2 = TorRouterInterface(route[1], tr3)
-                tor_interface = TorRouterInterface(route[0], tr2, True)
+            client_logger.debug("Route %s:%d -> %s:%d -> %s:%d" %
+                                (route[0][1], route[0][2],
+                                 route[1][1], route[1][2],
+                                 route[2][1], route[2][2]))
+            tr3 = TorRouterInterface(route[2])
+            tr2 = TorRouterInterface(route[1], tr3)
+            tor_interface = TorRouterInterface(route[0], tr2, True)
             tor_interface.establish_circuit()
             self.has_route = True
 
@@ -208,7 +168,7 @@ def main():
     with open(pubkeyp, "r") as f:
         pubkey = RSA.importKey(f.read())
 
-    tc = TorClient(port, p_ip, p_port, pubkey, testti)
+    tc = TorClient(port, p_ip, p_port, pubkey)
     tc.run_client()
 
 

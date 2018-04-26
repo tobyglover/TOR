@@ -7,9 +7,9 @@ import socket
 import struct
 
 circuit_logger = logging.getLogger("Circuit")
-circuit_logger.setLevel(logging.DEBUG)
-ch = logging.StreamHandler(sys.stdout)
-ch.setLevel(logging.DEBUG)
+circuit_logger.setLevel(logging.INFO)
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 ch.setFormatter(formatter)
 circuit_logger.addHandler(ch)
@@ -143,12 +143,12 @@ class ClientCircuit(Circuit):
             self.is_exit = False
             self.next_sym = Symmetric(self.next_symkey)
 
-            circuit_logger.info("Connecting to %s:%d" % (self.ip, self.port))
+            circuit_logger.debug("Connecting to %s:%d" % (self.ip, self.port))
             next_sock = socket.socket()
             next_sock.connect((self.ip, self.port))
             next_sock.sendall(next_payload)
 
-            circuit_logger.info("Getting response from %s:%d" % (self.ip, self.port))
+            circuit_logger.debug("Getting response from %s:%d" % (self.ip, self.port))
             payload, status = self._get_payload(next_sock, self.next_sym)  # TODO: handle bad status
             payload = self.client_sym.encrypt_payload(payload, 'OKOK')
             payload = self.prev_sym.encrypt_payload(payload, 'OKOK')
@@ -169,14 +169,14 @@ class ClientCircuit(Circuit):
             ip, self.port, payload = struct.unpack(">4sl%ds" % (len(payload) - 8), payload)
             self.ip = socket.inet_ntoa(ip)
             next_sock.connect((self.ip, self.port))
-            circuit_logger.info("Connecting to target server %s:%d" % (self.ip, self.port))
+            circuit_logger.debug("Connecting to target server %s:%d" % (self.ip, self.port))
         else:
-            circuit_logger.info("Connecting to next router %s:%d" % (self.ip, self.port))
+            circuit_logger.debug("Connecting to next router %s:%d" % (self.ip, self.port))
             next_sock.connect((self.ip, self.port))
 
         next_sock.sendall(payload)
 
-        circuit_logger.info("Getting response from %s:%d" % (self.ip, self.port))
+        circuit_logger.debug("Getting response from %s:%d" % (self.ip, self.port))
         if self.is_exit:
             payload = ''
             chunk = 'asdf'
@@ -190,7 +190,7 @@ class ClientCircuit(Circuit):
                     circuit_logger.warning("Received exception while pulling")
                     payload = ''
                     chunk = ''
-                logging.debug("Received chunk from website (%dB)" % len(chunk))
+                circuit_logger.debug("Received chunk from website (%dB)" % len(chunk))
                 payload += chunk
             next_sock.settimeout(None)
         else:
@@ -206,11 +206,11 @@ class ClientCircuit(Circuit):
             payload = ""
         else:
             next_sock = socket.socket()
-            circuit_logger.info("Connecting to next router %s:%d" % (self.ip, self.port))
+            circuit_logger.debug("Connecting to next router %s:%d" % (self.ip, self.port))
             next_sock.connect((self.ip, self.port))
             next_sock.sendall(payload)
 
-            circuit_logger.info("Getting response from %s:%d" % (self.ip, self.port))
+            circuit_logger.debug("Getting response from %s:%d" % (self.ip, self.port))
             payload, status = self._get_payload(next_sock, self.next_sym)  # TODO: handle bad status
 
         payload = self.client_sym.encrypt_payload(payload, 'OKOK')
