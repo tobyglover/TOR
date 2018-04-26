@@ -8,13 +8,14 @@ import sys
 from threading import Lock
 
 
-tri_logger = logging.getLogger("TorRouterInterface")
-tri_logger.setLevel(logging.DEBUG)
-ch = logging.StreamHandler(sys.stdout)
-ch.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-ch.setFormatter(formatter)
-tri_logger.addHandler(ch)
+# tri_logger = logging.getLogger("TorRouterInterface")
+# tri_logger.setLevel(logging.DEBUG)
+# if not tri_logger.handlers:
+#     ch = logging.StreamHandler(sys.stdout)
+#     ch.setLevel(logging.DEBUG)
+#     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+#     ch.setFormatter(formatter)
+#     tri_logger.addHandler(ch)
 
 
 class Onion(object):
@@ -86,7 +87,6 @@ class TorRouterInterface(object):
         self.prev_symkey = None
 
         self.next_router = next_router
-        self.s = socket.socket()
 
         self.is_entry = is_entry
         self.is_exit = False if next_router else True
@@ -95,7 +95,6 @@ class TorRouterInterface(object):
         self.crypt = Crypt(public_key=router_pubkey, private_key=self.client_key,
                            name="interface%d" % port, debug=True)
         self.client_sym = Symmetric(self.client_symkey, sid)
-        self.resp_sym = Symmetric(self.resp_symkey)
 
         self.db_mutex = Lock()
         self.established = False
@@ -126,27 +125,24 @@ class TorRouterInterface(object):
         pass # TODO: add keep alive
 
     def _connect(self):
-        self.s = socket.socket()
-        self.s.connect(self.ipp)
+        s = socket.socket()
+        s.connect(self.ipp)
+        return s
 
-    def _send(self, payload):
-        logging.info("Sending packet")
-        self._connect()
-        self.s.sendall(payload)
-
-    def _pull(self, length):
+    def _pull(self, s, length):
         message = ''
         while len(message) < length:
-            message += self.s.recv(length - len(message))
+            message += s.recv(length - len(message))
         return message
 
-    def _recv(self):
-        headers = self._pull(self.resp_sym.CRYPT_HEADER_LEN + self.resp_sym.HEADER_LEN)
-        crypt_header, header, _ = self.resp_sym.unpack_payload(headers)
+    def _recv(self, s):
+        resp_sym = Symmetric(self.resp_symkey)
+        headers = self._pull(s, resp_sym.CRYPT_HEADER_LEN + resp_sym.HEADER_LEN)
+        crypt_header, header, _ = resp_sym.unpack_payload(headers)
 
-        self.resp_sym.absorb_crypto_header(crypt_header)
-        l, status = self.resp_sym.decrypt_header(header)
-        return self.resp_sym.decrypt_body(self._pull(l))
+        resp_sym.absorb_crypto_header(crypt_header)
+        l, status = resp_sym.decrypt_header(header)
+        return resp_sym.decrypt_body(self._pull(s, l))
 
     def peel_onion(self, onion):
         crypt_header, header, body = self.client_sym.unpack_payload(onion)
@@ -195,9 +191,12 @@ class TorRouterInterface(object):
         if not self.is_entry:
             return payload
 
-        tri_logger.info("Sending payload to %s:%d" % self.ipp)
-        self._send(payload)
-        response = self._recv()
+        # tri_logger.info("Sending payload to %s:%d" % self.ipp)
+        s = self._connect()
+        s.sendall(payload)
+        # self._send(payload)
+        response = self._recv(s)
+        s.close()
         self.peel_onion(response)
 
         self.established = True
@@ -208,7 +207,7 @@ class TorRouterInterface(object):
             return Onion(self.sid, self.crypt)
         return Onion(self.sid, self.crypt, self.next_router.build_onion())
 
-    @lock_interface
+    # @lock_interface
     def make_request(self, url, request):
         """make_request
 
@@ -238,9 +237,11 @@ class TorRouterInterface(object):
         payload = onion.wrap(exit_pkt, "SEND")
 
         logging.info("Requesting %s:%d" % (ip, port))
-        self._send(payload)
+        s = self._connect()
+        s.send(payload)
 
-        response = self._recv()
+        response = self._recv(s)
+        s.close()
         return onion.unwrap(response)
 
     @lock_interface
@@ -260,9 +261,11 @@ class TorRouterInterface(object):
         payload = onion.wrap("", "EXIT")
 
         logging.info("Closing circuit")
-        self._send(payload)
+        s = self._connect()
+        s.sendall(payload)
 
-        response = self._recv()
+        response = self._recv(s)
+        s.close()
         self.established = False
         return onion.unwrap(response)
 

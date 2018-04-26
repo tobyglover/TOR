@@ -11,12 +11,13 @@ import thread
 
 
 client_logger = logging.getLogger("Client")
-ch = logging.StreamHandler(sys.stdout)
-client_logger.setLevel(logging.DEBUG)
-ch.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-ch.setFormatter(formatter)
-client_logger.addHandler(ch)
+if not client_logger.handlers:
+    ch = logging.StreamHandler(sys.stdout)
+    client_logger.setLevel(logging.DEBUG)
+    ch.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    ch.setFormatter(formatter)
+    client_logger.addHandler(ch)
 
 
 def parse_args():
@@ -174,6 +175,18 @@ class TorClient(object):
                 except CircuitFailed:
                     client_logger.error("Closing circuit failed! Network may be corrupted")
                     return
+            except KeyboardInterrupt:
+                client_logger.warning("Received keyboard interrupt")
+                if tor_interface:
+                    client_logger.info("Closing circuit...")
+                    try:
+                        tor_interface.close_circuit()
+                    except CircuitFailed:
+                        e = sys.exc_info()
+                        client_logger.error("Closing circuit failed! Network may be corrupted")
+                        raise e[0], e[1], e[2]
+                client_logger.info("Exiting cleanly")
+                return
             except:
                 client_logger.error("Received exception")
                 e = sys.exc_info()

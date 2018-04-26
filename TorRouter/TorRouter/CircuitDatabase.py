@@ -44,7 +44,7 @@ class CircuitDatabase(object):
 
         if not db_path:
             db_path = getcwd() + "/circuitdb_" + urandom(2).encode("hex") + ".db"
-        self.db = sqlite3.connect(db_path)
+        self.db = sqlite3.connect(db_path, check_same_thread=False)
         self.cur = self.db.cursor()
         try:
             self.cur.execute("CREATE TABLE pfs (id BLOB NOT NULL UNIQUE, pubkey text NOT NULL);")
