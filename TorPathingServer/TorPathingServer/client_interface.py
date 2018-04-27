@@ -1,16 +1,15 @@
 from shared import *
 import sys
 import socket
-import struct
 from Crypto.PublicKey import RSA
 from Crypt import Crypt
-from random import shuffle
 from os import urandom
 import struct
 import multiprocessing
 import torrouterd
 
 ROUTE_INFO_SIZE = struct.calcsize(ROUTE_STRUCT_FMT)
+
 
 class PathingFailed(Exception):
     pass
@@ -49,7 +48,9 @@ class TORPathingServer(object):
         return enc_pkt, ip, port, pk, sid, sym_key
 
     def _start_daemon(self, privatekey):
-        self._p = multiprocessing.Process(target=torrouterd.start, name="torrouterd", args=(self._server_ip, self._server_port, privatekey, self._router_id))
+        self._p = multiprocessing.Process(target=torrouterd.start, name="torrouterd",
+                                          args=(self._server_ip, self._server_port, privatekey, self._router_id),
+                                          kwargs={"server_pubkey": self._server_pubkey})
         self._p.daemon = True
         self._p.start()
 
@@ -70,7 +71,8 @@ class TORPathingServer(object):
     def register(self, port, privatekey):
         assert self._router_id is None, "Error: instance is already registered with server"
         conn = self._newconnection()
-        conn.send(struct.pack("!cI%ds" % DER_KEY_SIZE, MSG_TYPES.REGISTER_SERVER, port, privatekey.publickey().exportKey(format='DER')))
+        conn.send(struct.pack("!cI%ds" % DER_KEY_SIZE, MSG_TYPES.REGISTER_SERVER, port,
+                              privatekey.publickey().exportKey(format='DER')))
         self._router_id = conn.receive()
         self._start_daemon(privatekey)
 
@@ -140,14 +142,6 @@ class TestTORPathingServer(object):
             sid = urandom(8)
             sym_key = urandom(16)
             enc_pkt = c.sign_and_encrypt("ESTB" + self.rid + sid + sym_key)
-            # print "SIMKEYC", port, sym_key.encode("hex")
-            # print "SID   C", port, sid.encode("hex")
-            # print 'DATA', port, len("ESTB" + self.rid + sid + sym_key), ("ESTB" + self.rid + sid + sym_key).encode("hex")[:16], ("ESTB" + self.rid + sid + sym_key).encode("hex")[-16:]
-            # print "r%d: Encrypting with %s Signing with %s - %s...%s:%s...%s (%dB)" % (port, pk.exportKey('DER').encode('hex')[70:86],
-            #                                                         self.private_key.publickey().exportKey('DER').encode('hex')[70:86],
-            #                                                         enc_pkt.encode('hex')[:16], enc_pkt.encode('hex')[-16:],
-            #                                                         ("ESTB" + sid + sym_key).encode('hex')[:16],
-            #                                                         ("ESTB" + sid + sym_key).encode('hex')[-16:],len(enc_pkt))
             route.append((enc_pkt, ip, port, pk, sid, sym_key))
 
         return route

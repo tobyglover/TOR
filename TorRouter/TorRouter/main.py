@@ -6,7 +6,7 @@ TOR router
 """
 import socket
 from socket import timeout
-from SocketServer import TCPServer, BaseRequestHandler
+from SocketServer import TCPServer, BaseRequestHandler, ThreadingMixIn
 import argparse
 from Crypto.PublicKey import RSA
 from TorPathingServer import TORPathingServer
@@ -16,10 +16,12 @@ import sys
 from CircuitDatabase import CircuitDatabase, CircuitNotFound, BadMethod
 from Circuit import PFCircuit, ClientCircuit
 
+# logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
 router_logger = logging.getLogger("TorRouter")
-router_logger.setLevel(logging.DEBUG)
-ch = logging.StreamHandler(sys.stdout)
-ch.setLevel(logging.DEBUG)
+router_logger.setLevel(logging.INFO)
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 ch.setFormatter(formatter)
 router_logger.addHandler(ch)
@@ -35,13 +37,14 @@ def parse_args():
     args = parser.parse_args()
     return args.pip, args.pport, args.pubkey, args.cdb, args.port
 
+# class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
-class CustomTCPServer(TCPServer, object):
+class CustomTCPServer(ThreadingMixIn, TCPServer, object):
     def __init__(self, server_address, cdb, raw_pubkey, request_handler):
         router_logger.info("Setting up server...")
         super(CustomTCPServer, self).__init__(server_address, request_handler)
         self.key = Crypt().generate_key()
-        self.crypt = Crypt(self.key, debug=True)
+        self.crypt = Crypt(self.key)
         self.cdb = CircuitDatabase(db_path=cdb, rid='\x00' * 8, raw_pubkey=raw_pubkey)
         router_logger.info("Server running")
 
@@ -52,7 +55,7 @@ class MyTCPHandler(BaseRequestHandler):
     DER_LEN = len(Crypt().generate_key().publickey().exportKey(format='DER'))
 
     def setup(self):
-        router_logger.info("Setting up router")
+        # router_logger.info("Setting up TCPHandler")
         self.exit = False
         self.next_sock = None
         self.client_crypt = None
@@ -70,7 +73,8 @@ class MyTCPHandler(BaseRequestHandler):
 
         router_logger.debug("Waiting for header...")
         header = self.pull(self.request, self.HEADER_SIZE)
-        router_logger.debug("Pulled header (%dB) %s" % (len(header), repr(header.encode('hex')[:8])))
+        router_logger.debug("Pulled header (%dB) %s" %
+                            (len(header), repr(header.encode('hex')[:8])))
 
         try:
             method, circ = self.server.cdb.get(header, self.server.crypt)
@@ -79,10 +83,18 @@ class MyTCPHandler(BaseRequestHandler):
             raise e[0], e[1], e[2]
 
         if method == self.server.cdb.ESTB:
+            router_logger.info("Building circuit")
             circ.build_circuit(self.request)
             self.server.cdb.add(circ)
         else:
-            pass # TODO: finish
+            router_logger.info("Handling request")
+            status = circ.handle_connection(self.request)
+
+            if status == circ.EXIT:
+                router_logger.info("Removing circuit %s" % repr(circ.name))
+                self.server.cdb.remove(circ)
+            else:
+                router_logger.info("Sucessfully returned request")
 
     def make_next_hop(self, next_hop, data):
         router_logger.info("Sending establishment circuit to next router")

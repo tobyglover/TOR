@@ -1,4 +1,4 @@
-#daemon for tor routers to report network info to the pathing server
+# daemon for tor routers to report network info to the pathing server
 
 import sys
 import uuid
@@ -12,40 +12,50 @@ from shared import *
 
 CONN_KEY = Crypt().generate_key()
 
-def append_current_time(payload, private_key):
-    c = Crypt(public_key=get_server_public_key(), private_key=private_key)
+
+def append_current_time(payload, private_key, server_pubey=None):
+    if server_pubey:
+        c = Crypt(public_key=server_pubey, private_key=private_key)
+    else:
+        c = Crypt(public_key=get_server_public_key(), private_key=private_key)
     return payload + c.sign_and_encrypt(now_as_str())
 
+
 class CustomTCPServer(TCPServer, object):
-    def __init__(self, server_address, request_handler, pathing_server_ip, pathing_server_port, router_private_key):
+    def __init__(self, server_address, request_handler, pathing_server_ip, pathing_server_port, router_private_key,
+                 server_pubkey=None):
         super(CustomTCPServer, self).__init__(server_address, request_handler)
         self.timeout = 3
         self.request_queue_size = 10
         self.router_private_key = router_private_key
         self._pathing_server_ip = pathing_server_ip
         self._pathing_server_port = pathing_server_port
+        self.server_pubkey = server_pubkey
 
     def _newconnection(self):
-        return Connection(self._pathing_server_ip, self._pathing_server_port, CONN_KEY)
+        return Connection(self._pathing_server_ip, self._pathing_server_port, CONN_KEY, self.server_pubkey)
+
 
 class TCPHandler(BaseRequestHandler):
     def handle(self):
         payload = self.request.recv(2048)
-        payload = MSG_TYPES.CONNECTION_TEST_RESULTS + append_current_time(payload, self.server.router_private_key)
+        payload = MSG_TYPES.CONNECTION_TEST_RESULTS + append_current_time(payload, self.server.router_private_key,
+                                                                          self.server.server_pubkey)
         conn = self.server._newconnection()
         conn.send(payload)
 
 
 class Reporter(object):
-    def __init__(self, server_ip, server_port, router_private_key, router_id, own_port):
+    def __init__(self, server_ip, server_port, router_private_key, router_id, own_port, server_pubkey=None):
         self._server_ip = server_ip
         self._server_port = server_port
         self._router_key = router_private_key
         self._router_id = router_id
+        self._server_pubkey = server_pubkey
         self._register(own_port)
 
     def _newconnection(self):
-        return Connection(self._server_ip, self._server_port, CONN_KEY)
+        return Connection(self._server_ip, self._server_port, CONN_KEY, self._server_pubkey)
 
     def _register(self, own_port):
         conn = self._newconnection()
@@ -58,7 +68,7 @@ class Reporter(object):
         (ip_addr, port) = struct.unpack(struct_fmt, data[:info_size])
         ip_addr = socket.inet_ntoa(ip_addr)
 
-        payload = append_current_time(payload, self._router_key)
+        payload = append_current_time(payload, self._router_key, self._server_pubkey)
 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.connect((ip_addr, port))
@@ -82,16 +92,22 @@ class Reporter(object):
             time.sleep(HEARTBEAT_INTERVAL_SEC)
 
 
-def start(pathing_server_ip, pathing_server_port, router_private_key, router_id):
-    server = CustomTCPServer(("0.0.0.0", 0), TCPHandler, pathing_server_ip, pathing_server_port, router_private_key)
+def start(pathing_server_ip, pathing_server_port, router_private_key, router_id, server_pubkey=None):
+    server = CustomTCPServer(("0.0.0.0", 0), TCPHandler, pathing_server_ip, pathing_server_port, router_private_key,
+                             server_pubkey)
     port = server.server_address[1]
-    r = Reporter(pathing_server_ip, pathing_server_port, router_private_key, router_id, port)
+    r = Reporter(pathing_server_ip, pathing_server_port, router_private_key, router_id, port, server_pubkey)
     r.begin_heartbeat()
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        return
+
 
 def main():
     print "SHOULD NOT BE CALLED DIRECTLY. INTENDED FOR TESTING PURPOSED ONLY"
     start(sys.argv[1], int(sys.argv[2]), Crypt().generate_key(), uuid.uuid4().bytes)
+
 
 if __name__ == "__main__":
     main()
