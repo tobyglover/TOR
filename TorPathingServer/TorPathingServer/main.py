@@ -1,6 +1,6 @@
 from shared import *
-from random import shuffle
-import uuid
+from structs import *
+
 import struct
 import sys
 import socket
@@ -25,8 +25,8 @@ class CustomTCPServer(TCPServer, object):
         self.timeout = 3
         self.request_queue_size = 10
         self.private_key = self._getPrivateKey()
-        self.tor_routers = {}
-        self.connection_tests = {}
+        self.routers = Routers()
+        self.conn_graph = Graph()
         self._connections = 0
         self.rid = "\x00" * 8
 
@@ -38,6 +38,14 @@ class CustomTCPServer(TCPServer, object):
         i = self._connections
         self._connections += 1
         return i
+
+    def add_router(self, router):
+        self.routers.add_router(router)
+        self.conn_graph.add_router(router)
+
+    def pop_router(self, router_id):
+        self.routers.pop_router(router_id)
+        #TODO
 
 
 class TCPHandler(BaseRequestHandler):
@@ -53,38 +61,42 @@ class TCPHandler(BaseRequestHandler):
     def _register_router(self, request):
         (port, pub_key) = struct.unpack("!I%ds" % DER_KEY_SIZE, request)
         self._output("Registering new router: %s:%d" % (self.client_address[0], port))
-        router_id = uuid.uuid4().bytes
-        self.server.tor_routers[router_id] = {"ip_addr": self.client_address[0],
-                                              "port": port,
-                                              "pub_key": pub_key}
-        self.server.connection_tests[router_id] = {}
-        self._send(router_id)
+        router = Router(self.client_address[0], port, pub_key)
+        self.server.add_router(router)
+        self._send(router.get_id())
+
+    def _unregister_router(self, request):
+        router_id = request[:ROUTER_ID_SIZE]
+        router = self.server.routers.get_router(router_id)
+        if not router is None and router.get_ip_addr() == self.client_address[0]:
+            self.server.pop_router(router_id)
+            self._output("Deregistering router: %s:%d" % (router.get_ip_addr(), router.get_port()))
 
     def _register_daemon(self, request):
         (router_id, daemon_port) = struct.unpack("!%dsI" % ROUTER_ID_SIZE, request)
-        if router_id in self.server.tor_routers:
-            self.server.tor_routers[router_id]["daemon_port"] = daemon_port
+        router = self.server.routers.get_router(router_id)
+        if not router is None:
+            router.set_daemon_port(daemon_port)
 
     def _determine_test_router(self, from_router_id):
-        for k in self.server.tor_routers.keys():
-            if k != from_router_id and "daemon_port" in self.server.tor_routers[k]:
-                return k
-        return None
+        from_router = self.server.routers.get_router(from_router_id)
+        if from_router is None:
+            return None
+        self.server.conn_graph.get_next_test(from_router)
 
     def _test_connection(self, request):
         router_id = request
-        to_router_id = self._determine_test_router(router_id)
+        to_router = self._determine_test_router(router_id)
 
-        if to_router_id is None:
+        if to_router is None:
             self._send("NONE")
             return
 
-        to_router = self.server.tor_routers[to_router_id]
         c = Crypt(public_key=self.server.private_key.publickey(), private_key=self.server.private_key)
         now = now_as_str()
-        payload = c.sign_and_encrypt(now + router_id + to_router_id)
+        payload = c.sign_and_encrypt(now + router_id + to_router.get_id())
 
-        self._send(struct.pack("!4sI", socket.inet_aton(to_router["ip_addr"]), to_router["daemon_port"]) + payload)
+        self._send(struct.pack("!4sI", socket.inet_aton(to_router.get_ip_addr()), to_router.get_daemon_port()) + payload)
 
     def _connection_test_results(self, request):
         now = datetime.utcnow()
@@ -97,10 +109,10 @@ class TCPHandler(BaseRequestHandler):
         i = 1
         times = [datetime_from_str(start_time)]
         for router_id in [from_router_id, to_router_id]:
-            router = self.server.tor_routers.get(router_id, None)
+            router = self.server.routers.get_router(router_id)
             if router is None:
                 return
-            c = Crypt(public_key=RSA.import_key(router["pub_key"]), private_key=self.server.private_key)
+            c = Crypt(public_key=router.get_pub_key(parse=True), private_key=self.server.private_key)
             times.append(datetime_from_str(c.decrypt_and_auth(request[i * 512:(i + 1) * 512])))
 
             i += 1
@@ -113,28 +125,21 @@ class TCPHandler(BaseRequestHandler):
 
         latency = (times[2] - times[1]).total_seconds() * 1000
 
-    def _unregister_router(self, request):
-        router_id = request[:ROUTER_ID_SIZE]
-        if self.server.tor_routers[router_id]["ip_addr"] == self.client_address[0]:
-            details = self.server.tor_routers.pop(router_id, None)
-            self.server.connection_tests.pop(router_id, None)
-            if not details is None:
-                self._output("Deregistering router: %s:%d" % (details["ip_addr"], details["port"]))
-
-    def _create_route(self):
+    def _send_route(self, routers):
         route = ""
-        shuffled_keys = self.server.tor_routers.keys()
-        shuffle(shuffled_keys)
 
-        for i in range(min(len(shuffled_keys), MAX_PATH_LENGTH)):
-            details = self.server.tor_routers[shuffled_keys[i]]
-            c = Crypt(public_key=RSA.import_key(details["pub_key"]), private_key=self.server.private_key, debug=True)
+        for router in routers:
+            c = Crypt(public_key=router.get_pub_key(parse=True), private_key=self.server.private_key, debug=True)
             sid = get_random_bytes(8)
             sym_key = get_random_bytes(16)
             enc_pkt = c.sign_and_encrypt("ESTB" + self.server.rid + sid + sym_key)
-            route += struct.pack(ROUTE_STRUCT_FMT, enc_pkt, socket.inet_aton(details["ip_addr"]), details["port"], details["pub_key"], sid, sym_key)
+            route += struct.pack(ROUTE_STRUCT_FMT, enc_pkt, socket.inet_aton(router.get_ip_addr()), router.get_port(), router.get_pub_key(), sid, sym_key)
 
         self._send(route)
+
+    def _create_route(self):
+        shuffled_routers = self.server.routers.shuffle_routers()
+        self._send_route(shuffled_routers[:min(len(shuffled_routers), MAX_PATH_LENGTH)])
 
     def setup(self):
         self._crypt = Crypt(self.server.private_key)
