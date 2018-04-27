@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
-echo "Setting up..."
-echo "Please enter password: "
+echo "Setting up (may request sudo password)..."
 sudo ./setup.sh > /dev/null 2>&1
 
 echo "Starting Pathing Server..."
