@@ -1,9 +1,19 @@
 from Crypt import Crypt
 import struct
 import socket
+from os import urandom
+
+
+class ConnectionCorrupted(Exception):
+    pass
+
+
+class URLNotFound(Exception):
+    pass
 
 
 class TorDNSInterface(object):
+    RECV_LEN = 512
 
     def __init__(self, ip, port, pubkey):
         """TorDNSInterface
@@ -25,13 +35,19 @@ class TorDNSInterface(object):
             message += s.recv(length - len(message))
         return message
 
-    def _send_recv(self, payload, length):
+    def _send_recv(self, payload):
+        salt = urandom(16)
+        payload = self.crypt.sign_and_encrypt(salt + payload)
         sock = socket.socket()
         sock.connect(self.ipp)
         sock.sendall(payload)
 
-        payload = self._pull(sock, length)  # TODO: GET RIGHT LENGTH
-        return self.crypt.decrypt_and_auth(payload)
+        response = self._pull(sock, self.RECV_LEN)
+        response = self.crypt.decrypt_and_auth(response)
+        if payload != response[:16]:
+            raise ConnectionCorrupted
+
+        return response[16:]
 
     def register(self, ip, port):
         """register
@@ -46,16 +62,11 @@ class TorDNSInterface(object):
             (str, str): Two-tuple with new .funion URL service is registered to
                         and API key for future communications with TorDNS server
         """
-        payload = struct.pack(">%ds4sL" % self.crypt.PUB_DER_LEN,
-                              self.prikey.publickey().export("DER"),
-                              socket.inet_aton(ip), port)
-        payload = self.crypt.sign_and_encrypt(payload)
-
-        resp = self._send_recv(payload, 10)  # TODO: GET RIGHT LENGTH
-        resp = struct.unpack(">16s")
-
-
-
+        payload = struct.pack(">4sL%ds" % self.crypt.PUB_DER_LEN,
+                              socket.inet_aton(ip), port,
+                              self.prikey.publickey().export("DER"))
+        resp = self._send_recv(payload)
+        return struct.unpack(">19s16s", resp)
 
     def update(self, ip, port, apikey):
         """update
@@ -70,7 +81,11 @@ class TorDNSInterface(object):
         Returns:
             bool: Whether or not update was successful
         """
-        pass
+        payload = struct.pack(">4sL16s%ds" % self.crypt.PUB_DER_LEN,
+                              socket.inet_aton(ip), port, apikey,
+                              self.prikey.publickey().export("DER"))
+        resp = self._send_recv(payload)
+        return struct.unpack(">?", resp)
 
     def deregister(self, apikey):
         """deregister
@@ -83,7 +98,10 @@ class TorDNSInterface(object):
         Returns:
             bool: Whether or not update was successful
         """
-        pass
+        payload = struct.pack(">16s%ds" % self.crypt.PUB_DER_LEN, apikey,
+                              self.prikey.publickey().export("DER"))
+        resp = self._send_recv(payload)
+        return struct.unpack(">?", resp)
 
     def lookup(self, url):
         """lookup
@@ -96,4 +114,10 @@ class TorDNSInterface(object):
         Returns:
             (str, int): Two-tuple of the IP and port of the funion service
         """
-        pass
+        payload = struct.pack(">19s%ds" % self.crypt.PUB_DER_LEN, url,
+                              self.prikey.publickey().export("DER"))
+        resp = self._send_recv(payload)
+        found, ip, port = struct.unpack(">?4sL", resp)
+        if not found:
+            raise URLNotFound
+        return ip, port
