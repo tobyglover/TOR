@@ -319,7 +319,6 @@ def calc_distance_between_regions(region1, region2):
 
 def get_region_for_ip(ip):
     url = "http://api.ipstack.com/%s?access_key=%s&fields=latitude,longitude" % (ip, IP_STACK_ACCESS_KEY)
-    print url
     c = urllib2.urlopen(url).read()
     coords = json.loads(c)
     try:

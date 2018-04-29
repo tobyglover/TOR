@@ -146,7 +146,6 @@ class TCPHandler(BaseRequestHandler):
         routes = self.server.conn_graph.get_paths(self.client_address[0])
         route_data = ""
         for route in routes:
-            print len(route_data)
             route_data += self._enc_route(route)
         self._send(route_data)
 
