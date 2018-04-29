@@ -1,5 +1,6 @@
 import uuid
 import utm
+from math import sqrt
 import urllib2
 import json
 from random import shuffle, choice, randint
@@ -77,6 +78,61 @@ class Graph(object):
             if node.is_empty():
                 self.remove_node(node)
 
+    def _get_latency_between_nodes(self, start_node, end_node, randomness=0):
+        if start_node == end_node:
+            return -1
+        edge = start_node.get_edge(end_node.get_region())
+        if edge is None:
+            return -1
+
+        latency = edge.get_average_latency()
+        return latency + randint(max(-randomness, -int(latency)), randomness)
+
+    def _get_path(self, start_node, end_node, randomness):
+        min_latency = 0
+        min_node = None
+        for middle_region in self._nodes:
+            middle_node = self._nodes[middle_region]
+            start_latency = self._get_latency_between_nodes(start_node, middle_node, randomness)
+            end_latency = self._get_latency_between_nodes(middle_node, end_node, randomness)
+            if start_latency < 0 or end_latency < 0:
+                continue
+
+            total_latency = start_latency + end_latency
+            if min_node is None or total_latency < min_latency:
+                min_node = middle_node
+                min_latency = total_latency
+
+        return [start_node.get_random_router(), min_node.get_random_router(), end_node.get_random_router()]
+
+    def get_paths(self, client_ip, randomness=5):
+        start_node = self.get_closest_node_in_graph(get_region_for_ip(client_ip))
+        end_regions = get_random_regions_for_continents()
+
+        paths = []
+        for end_region in end_regions:
+            end_node = self.get_closest_node_in_graph(end_region)
+            paths.append(self._get_path(start_node, end_node, randomness))
+
+        return paths
+
+    def get_closest_node_in_graph(self, to_region):
+        if to_region in self._nodes:
+            return to_region
+        else:
+            regions = self._nodes.keys()
+            min_dist = 0
+            closest_region = None
+
+            for region in regions:
+                dist = calc_distance_between_regions(to_region, region)
+                if closest_region is None or min_dist > dist:
+                    closest_region = region
+                    min_dist = dist
+
+            return self._get_node_for_region(closest_region)
+
+
 class Node(object):
     def __init__(self, region):
         self._region = region
@@ -90,6 +146,9 @@ class Node(object):
             string += "\t--->> %s: Latency %f ms (%d tests)\n" % (to_region, edge.get_average_latency(), edge.get_num_tests())
 
         return string
+
+    def __eq__(self, other):
+        return self.get_region() == other.get_region()
 
     def _get_connected_regions(self):
         connected_regions = set()
@@ -107,9 +166,15 @@ class Node(object):
     def remove_router(self, router):
         self._routers.pop(router.get_id(), None)
 
+    def get_random_router(self):
+        return choice(self._routers.values())
+
     def has_edge(self, edge):
         to_region = edge.get_other_region(self.get_region())
         return to_region in self._edges
+
+    def get_edge(self, to_region):
+        return self._edges.get(to_region, None)
 
     def add_edge(self, edge):
         to_region = edge.get_other_region(self.get_region())
@@ -234,6 +299,23 @@ class Router(object):
             self.region = get_region_for_ip(self.ip_addr)
         return self.region
 
+#returns a list of three random regions from the americas, europe, and asia
+def get_random_regions_for_continents():
+    americas = (("P", "U"), (9, 20))
+    europe = (("S", "V"), (29, 37))
+    asia = (("R", "W"), (38, 55))
+
+    continents = [americas, europe, asia]
+    regions = []
+    for continent in continents:
+        letter = chr(randint(ord(continent[0][0]), ord(continent[0][1])))
+        number = randint(continent[1][0], continent[1][1])
+        regions.append((letter, number))
+
+    return regions
+
+def calc_distance_between_regions(region1, region2):
+    return sqrt((ord(region1[0]) - ord(region2[0])) ** 2 + (region1[1] - region2[1]) ** 2)
 
 def get_region_for_ip(ip):
     url = "http://api.ipstack.com/%s?access_key=%s&fields=latitude,longitude" % (ip, IP_STACK_ACCESS_KEY)
@@ -242,9 +324,11 @@ def get_region_for_ip(ip):
     coords = json.loads(c)
     try:
         utm_pos = utm.from_latlon(coords["latitude"], coords["longitude"])
-        return utm_pos[3] + str(utm_pos[2])
+        letter = utm_pos[3]
+        number = utm_pos[2]
     except:
         # pick a random region. Mainly for testing on localhost, this (probably) won't happen in production
         letter = chr(randint(65, 90))
         number = randint(1, 60)
-        return letter + str(number)
+
+    return (letter, number)

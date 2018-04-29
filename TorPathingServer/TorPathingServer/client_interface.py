@@ -7,6 +7,7 @@ from os import urandom
 import struct
 import multiprocessing
 import torrouterd
+from random import choice
 
 ROUTE_INFO_SIZE = struct.calcsize(ROUTE_STRUCT_FMT)
 
@@ -34,6 +35,7 @@ class TORPathingServer(object):
         self._router_id = None
         self._private_key = Crypt().generate_key()
         self._server_pubkey = server_pubkey
+        self._optimized_routes = None
         if self._server_pubkey is None:
             self._server_pubkey = get_server_public_key()
 
@@ -48,6 +50,15 @@ class TORPathingServer(object):
         ip = socket.inet_ntoa(ip)
         pk = RSA.import_key(pk)
         return enc_pkt, ip, port, pk, sid, sym_key
+
+    def _parse_route(self, route_data):
+        i = 0
+        route = []
+        while (i + 1) * ROUTE_INFO_SIZE <= len(route_data):
+            data = route_data[i * ROUTE_INFO_SIZE:(i + 1) * ROUTE_INFO_SIZE]
+            route.append(self._parse_route_node(data))
+            i += 1
+        return route
 
     def _start_daemon(self, privatekey):
         self._p = multiprocessing.Process(target=torrouterd.start, name="torrouterd",
@@ -98,8 +109,7 @@ class TORPathingServer(object):
     returns: a list of the routers to pass through. Each router is represented
         as a 3-tuple containing in order the ip address (str), port (int), and
         the router's public key (Crypto.PublicKey.RSA instance). No assumptions
-        should be made about the length of the route (although it is currently 3
-        or less)
+        should be made about the length of the route
     """
     def get_route(self):
         conn = self._newconnection()
@@ -107,16 +117,38 @@ class TORPathingServer(object):
         route_data = conn.receive(4096)
         if len(route_data) == 0:
             raise PathingFailed
-        i = 0
-        route = []
-        while (i + 1) * ROUTE_INFO_SIZE <= len(route_data):
-            data = route_data[i * ROUTE_INFO_SIZE:(i + 1) * ROUTE_INFO_SIZE]
-            route.append(self._parse_route_node(data))
-            i += 1
 
-        return route
+        return self._parse_route(route_data)
+
+    def get_optimized_route(self, refresh=False, destination=None):
+        destinations = ["Americas", "Europe", "Asia"]
+
+        if self._optimized_routes is None or refresh:
+            conn = self._newconnection()
+            conn.send(MSG_TYPES.GET_ROUTE_OPTIMIZED)
+            route_data = conn.receive(4096*3)
+            if len(route_data) == 0:
+                raise PathingFailed
+
+            route_size = len(route_data) / 3
+            routes = []
+            for i in range(3):
+                routes.append(self._parse_route(route_data[i * route_size:(i+1) * route_size]))
+
+            self._optimized_routes = routes
+
+        if destination is None or not destination in destinations:
+            return choice(self._optimized_routes)
+        else:
+            for i in range(len(destinations)):
+                if destination == destinations[i]:
+                    return self._optimized_routes[i]
+
 
 if __name__ == "__main__":
     server = TORPathingServer(sys.argv[1], int(sys.argv[2]))
-    server.register(2100, RSA.generate(2048))
-    raw_input("press enter to quit")
+    if len(sys.argv) == 4:
+        server.get_optimized_route()
+    else:
+        server.register(2100, RSA.generate(2048))
+        raw_input("press enter to quit")

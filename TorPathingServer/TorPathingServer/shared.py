@@ -30,6 +30,7 @@ class MSG_TYPES(object):
     REGISTER_DAEMON = chr(5)
     TEST_CONNECTION = chr(6)
     CONNECTION_TEST_RESULTS = chr(7)
+    GET_ROUTE_OPTIMIZED = chr(8)
 
 
 class Connection(object):

@@ -126,7 +126,7 @@ class TCPHandler(BaseRequestHandler):
         latency = (times[2] - times[1]).total_seconds() * 1000
         self.server.conn_graph.add_test_results(from_router.get_region(), to_router.get_region(), latency)
 
-    def _send_route(self, routers):
+    def _enc_route(self, routers):
         route = ""
 
         for router in routers:
@@ -136,11 +136,19 @@ class TCPHandler(BaseRequestHandler):
             enc_pkt = c.sign_and_encrypt("ESTB" + self.server.rid + sid + sym_key)
             route += struct.pack(ROUTE_STRUCT_FMT, enc_pkt, socket.inet_aton(router.get_ip_addr()), router.get_port(), router.get_pub_key(), sid, sym_key)
 
-        self._send(route)
+        return route
 
     def _create_route(self):
         shuffled_routers = self.server.routers.shuffle_routers()
-        self._send_route(shuffled_routers[:min(len(shuffled_routers), MAX_PATH_LENGTH)])
+        self._send(self._enc_route(shuffled_routers[:min(len(shuffled_routers), MAX_PATH_LENGTH)]))
+
+    def _create_route_optimized(self):
+        routes = self.server.conn_graph.get_paths(self.client_address[0])
+        route_data = ""
+        for route in routes:
+            print len(route_data)
+            route_data += self._enc_route(route)
+        self._send(route_data)
 
     def setup(self):
         self._crypt = Crypt(self.server.private_key)
@@ -170,6 +178,9 @@ class TCPHandler(BaseRequestHandler):
             elif request_type == MSG_TYPES.GET_ROUTE:
                 self._output("Creating route")
                 self._create_route()
+            elif request_type == MSG_TYPES.GET_ROUTE_OPTIMIZED:
+                self._output("Creating optimized routes")
+                self._create_route_optimized()
             elif request_type == MSG_TYPES.REGISTER_DAEMON:
                 self._output("Registering daemon for router")
                 self._register_daemon(request)
