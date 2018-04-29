@@ -1,6 +1,5 @@
 from shared import *
 from structs import *
-
 import struct
 import sys
 import socket
@@ -44,8 +43,8 @@ class CustomTCPServer(TCPServer, object):
         self.conn_graph.add_router(router)
 
     def pop_router(self, router_id):
-        self.routers.pop_router(router_id)
-        #TODO
+        router = self.routers.pop_router(router_id)
+        self.conn_graph.remove_router(router)
 
 
 class TCPHandler(BaseRequestHandler):
@@ -82,11 +81,13 @@ class TCPHandler(BaseRequestHandler):
         from_router = self.server.routers.get_router(from_router_id)
         if from_router is None:
             return None
-        self.server.conn_graph.get_next_test(from_router)
+        return self.server.conn_graph.get_next_test(from_router)
 
     def _test_connection(self, request):
         router_id = request
         to_router = self._determine_test_router(router_id)
+
+        print self.server.conn_graph
 
         if to_router is None:
             self._send("NONE")
@@ -103,13 +104,12 @@ class TCPHandler(BaseRequestHandler):
         c = Crypt(public_key=self.server.private_key.publickey(), private_key=self.server.private_key)
         header = c.decrypt_and_auth(request[:512])
         start_time = header[:TIME_STR_SIZE]
-        from_router_id = header[TIME_STR_SIZE:TIME_STR_SIZE+ROUTER_ID_SIZE]
-        to_router_id = header[TIME_STR_SIZE+ROUTER_ID_SIZE:]
+        from_router = self.server.routers.get_router(header[TIME_STR_SIZE:TIME_STR_SIZE+ROUTER_ID_SIZE])
+        to_router = self.server.routers.get_router(header[TIME_STR_SIZE+ROUTER_ID_SIZE:])
 
         i = 1
         times = [datetime_from_str(start_time)]
-        for router_id in [from_router_id, to_router_id]:
-            router = self.server.routers.get_router(router_id)
+        for router in [from_router, to_router]:
             if router is None:
                 return
             c = Crypt(public_key=router.get_pub_key(parse=True), private_key=self.server.private_key)
@@ -124,6 +124,7 @@ class TCPHandler(BaseRequestHandler):
                 return
 
         latency = (times[2] - times[1]).total_seconds() * 1000
+        self.server.conn_graph.add_test_results(from_router.get_region(), to_router.get_region(), latency)
 
     def _send_route(self, routers):
         route = ""

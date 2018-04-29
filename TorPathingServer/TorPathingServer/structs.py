@@ -1,51 +1,198 @@
 import uuid
-from random import shuffle
+import utm
+import urllib2
+import json
+from random import shuffle, choice, randint
 from Crypto.PublicKey import RSA
+
+IP_STACK_ACCESS_KEY = "702000af0f3cb5843bf102c88974b4e9"
 
 class Graph(object):
     def __init__(self):
         self._nodes = {}
 
-    def add_router(self, router):
-        region = router.get_region()
-        node = self._nodes.get(region, None)
+    def __str__(self):
+        string = ""
+        for region in self._nodes:
+            string += str(self._nodes[region])
+        return string
 
+    def _get_node_for_region(self, region):
+        return self._nodes.get(region, None)
+
+    def _get_node_for_router(self, router):
+        region = router.get_region()
+        return self._get_node_for_region(region)
+
+    def add_test_results(self, from_region, to_region, latency):
+        from_node = self._get_node_for_region(from_region)
+        to_node = self._get_node_for_region(to_region)
+
+        if not from_node is None and not to_node is None:
+            edge = Edge(set([from_region, to_region]), latency=latency)
+            if from_node.has_edge(edge):
+                from_node.update_edge(edge)
+            else:
+                to_node.add_edge(edge)
+                from_node.add_edge(edge)
+
+    def get_next_test(self, from_router):
+        from_node = self._get_node_for_router(from_router)
+        if from_node is None:
+            return None
+
+        available_regions = set(self._nodes.keys())
+        available_regions.remove(from_node.get_region())
+
+        if len(available_regions) == 0:
+            return None
+
+        for _ in range(3):
+            to_region = from_node.get_needed_test_region(available_regions)
+            to_node = self._get_node_for_region(to_region)
+            to_router = to_node.get_test_router()
+            if not to_router is None:
+                return to_router
+
+        return None
+
+    def add_router(self, router):
+        node = self._get_node_for_router(router)
         if node is None:
+            region = router.get_region()
             node = Node(region)
             self._nodes[region] = node
 
         node.add_router(router)
 
-    def get_next_test(self, from_router):
-        return None
-        for k in self.tor_routers.keys():
-            if k != from_router_id and "daemon_port" in self.server.tor_routers[k]:
-                return k
-        return None
+    def remove_node(self, node):
+        self._nodes.pop(node.get_region())
+        for region in self._nodes:
+            self._nodes[region].remove_edge(node.get_region())
 
+    def remove_router(self, router):
+        node = self._get_node_for_router(router)
+        if not node is None:
+            node.remove_router(router)
+            if node.is_empty():
+                self.remove_node(node)
 
 class Node(object):
     def __init__(self, region):
         self._region = region
-        self._routers = []
+        self._routers = {}
         self._edges = {}
 
+    def __str__(self):
+        string = "Region %s: %d routers, %d edges\n" % (self._region, len(self._routers), len(self._edges))
+        for to_region in self._edges:
+            edge = self._edges[to_region]
+            string += "\t--->> %s: Latency %f ms (%d tests)\n" % (to_region, edge.get_average_latency(), edge.get_num_tests())
+
+        return string
+
+    def _get_connected_regions(self):
+        connected_regions = set()
+        for edge in self._edges.values():
+            connected_regions.add(edge.get_other_region(self._region))
+
+        return connected_regions
+
+    def get_region(self):
+        return self._region
+
     def add_router(self, router):
-        self._routers.append(router)
+        self._routers[router.get_id()] = router
+
+    def remove_router(self, router):
+        self._routers.pop(router.get_id(), None)
+
+    def has_edge(self, edge):
+        to_region = edge.get_other_region(self.get_region())
+        return to_region in self._edges
+
+    def add_edge(self, edge):
+        to_region = edge.get_other_region(self.get_region())
+        self._edges[to_region] = edge
+
+    def update_edge(self, edge):
+        to_region = edge.get_other_region(self.get_region())
+        current_edge = self._edges.get(to_region, None)
+        current_edge.add(edge)
+
+    def remove_edge(self, region):
+        self._edges.pop(region, None)
+
+    def get_needed_test_region(self, available_regions):
+        connected_regions = self._get_connected_regions()
+        needed_regions = available_regions - connected_regions
+        if len(needed_regions) > 0:
+            return needed_regions.pop()
+        else:
+            return available_regions.pop()
+
+    def get_test_router(self):
+        if len(self._routers) == 0:
+            return None
+
+        for _ in range(3):
+            router = choice(self._routers.values())
+            if not router.get_daemon_port() is None:
+                return router
+
+        return None
+
+    def is_empty(self):
+        return len(self._routers) == 0
 
 class Edge(object):
-    def __init__(self, region1, region2, latency=0):
+    def __init__(self, regions, latency=0):
+        self._regions = regions
         self._num_tests = 0
         self._sum_latency = latency
         if latency > 0:
             self._num_tests = 1
 
-    def add_test(self, latency):
-        self._sum_latency += latency
-        self._num_tests += 1
+    def get_other_region(self, region):
+        return (self._regions - set([region])).pop()
 
-    def get_average(self):
+    def get_regions(self):
+        return self._regions
+
+    def get_sum_latency(self):
+        return self._sum_latency
+
+    def get_num_tests(self):
+        return self._num_tests
+
+    def add(self, edge):
+        if self._regions == edge.get_regions():
+            self._sum_latency += edge.get_num_tests()
+            self._num_tests += edge.get_num_tests()
+
+    def get_average_latency(self):
         return self._sum_latency / self._num_tests
+
+class Routers(object):
+    def __init__(self):
+        self._routers = {}
+
+    def __str__(self):
+        return str(self._routers)
+
+    def add_router(self, router):
+        self._routers[router.get_id()] = router
+
+    def get_router(self, router_id):
+        return self._routers.get(router_id, None)
+
+    def pop_router(self, router_id):
+        return self._routers.pop(router_id, None)
+
+    def shuffle_routers(self):
+        routers = self._routers.values()
+        shuffle(routers)
+        return routers
 
 class Router(object):
     def __init__(self, ip_addr, port, pub_key):
@@ -57,7 +204,10 @@ class Router(object):
         self.region = None
 
     def __str__(self):
-        return "Router %s:%d" % (self.get_ip_addr(), self.get_port())
+        daemon_port = self.daemon_port
+        if daemon_port is None:
+            daemon_port = "None"
+        return "Router %s:%d, daemon_port:%d, region:%s" % (self.get_ip_addr(), self.get_port(), daemon_port, self.get_region())
 
     def get_id(self):
         return self.id
@@ -81,31 +231,20 @@ class Router(object):
 
     def get_region(self):
         if self.region is None:
-            #TODO
-            self.region = "U32"
+            self.region = get_region_for_ip(self.ip_addr)
         return self.region
-
-class Routers(object):
-    def __init__(self):
-        self._routers = {}
-
-    def __str__(self):
-        return self._routers.__str__()
-
-    def add_router(self, router):
-        self._routers[router.get_id()] = router
-
-    def get_router(self, router_id):
-        return self._routers.get(router_id, None)
-
-    def pop_router(self, router_id):
-        return self._routers.pop(router_id, None)
-
-    def shuffle_routers(self):
-        routers = self._routers.values()
-        shuffle(routers)
-        return routers
 
 
 def get_region_for_ip(ip):
-    pass
+    url = "http://api.ipstack.com/%s?access_key=%s&fields=latitude,longitude" % (ip, IP_STACK_ACCESS_KEY)
+    print url
+    c = urllib2.urlopen(url).read()
+    coords = json.loads(c)
+    try:
+        utm_pos = utm.from_latlon(coords["latitude"], coords["longitude"])
+        return utm_pos[3] + str(utm_pos[2])
+    except:
+        # pick a random region. Mainly for testing on localhost, this (probably) won't happen in production
+        letter = chr(randint(65, 90))
+        number = randint(1, 60)
+        return letter + str(number)

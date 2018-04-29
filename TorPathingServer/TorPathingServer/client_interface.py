@@ -34,6 +34,8 @@ class TORPathingServer(object):
         self._router_id = None
         self._private_key = Crypt().generate_key()
         self._server_pubkey = server_pubkey
+        if self._server_pubkey is None:
+            self._server_pubkey = get_server_public_key()
 
     def __del__(self):
         self.unregister()
@@ -111,38 +113,6 @@ class TORPathingServer(object):
             data = route_data[i * ROUTE_INFO_SIZE:(i + 1) * ROUTE_INFO_SIZE]
             route.append(self._parse_route_node(data))
             i += 1
-
-        return route
-
-
-class TestTORPathingServer(object):
-    def __init__(self, server_ip, server_port):
-        self._server_ip = server_ip
-        self._server_port = server_port
-        self._router_id = None
-        self.private_key = Crypt().generate_key()
-        self.rid = urandom(16)
-        self.routers = []
-
-    def __del__(self):
-        self.unregister()
-
-    def register(self, port, public_key):
-        self.routers.append(("127.0.0.1", port, public_key))
-
-    def unregister(self):
-        pass
-
-    def get_route(self):
-        route = []
-        # print self.routers
-        for r in self.routers[:3]:
-            ip, port, pk = r
-            c = Crypt(public_key=pk, private_key=self.private_key)
-            sid = urandom(8)
-            sym_key = urandom(16)
-            enc_pkt = c.sign_and_encrypt("ESTB" + self.rid + sid + sym_key)
-            route.append((enc_pkt, ip, port, pk, sid, sym_key))
 
         return route
 

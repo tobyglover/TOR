@@ -13,9 +13,9 @@ from shared import *
 CONN_KEY = Crypt().generate_key()
 
 
-def append_current_time(payload, private_key, server_pubey=None):
-    if server_pubey:
-        c = Crypt(public_key=server_pubey, private_key=private_key)
+def append_current_time(payload, private_key, server_pubkey=None):
+    if server_pubkey:
+        c = Crypt(public_key=server_pubkey, private_key=private_key)
     else:
         c = Crypt(public_key=get_server_public_key(), private_key=private_key)
     return payload + c.sign_and_encrypt(now_as_str())
@@ -52,6 +52,9 @@ class Reporter(object):
         self._router_key = router_private_key
         self._router_id = router_id
         self._server_pubkey = server_pubkey
+        if self._server_pubkey is None:
+            self._server_pubkey = get_server_public_key()
+
         self._register(own_port)
 
     def _newconnection(self):
