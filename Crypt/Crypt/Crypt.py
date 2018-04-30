@@ -8,6 +8,7 @@ from Crypto.Random import get_random_bytes
 from os import urandom
 import struct
 import logging
+import timeit
 import sys
 
 
@@ -58,7 +59,6 @@ class Crypt(object):
         self.log("Signing with own key %s" % self._private_key.publickey().exportKey(format="DER").encode('hex')[66:74])
         self.log("Encrypting with %s's key %s" % (self._name, self.public_key.exportKey(format="DER").encode('hex')[66:74]))
         signature = pss.new(self._private_key).sign(SHA256.new(data))
-        # print signature.encode('hex')[:16], signature.encode('hex')[-16:], data.encode('hex')[:16], data.encode('hex')[-16:]
         data = signature + data
 
         message = ""
@@ -82,7 +82,6 @@ class Crypt(object):
             data += cipher.decrypt(chunk)
             i += 1
 
-        # print data[:256].encode('hex')[:16], data[:256].encode('hex')[-16:], data[256:].encode('hex')[:16], data[256:].encode('hex')[-16:]
         return data[256:], data[:256]
 
     def auth(self, data, hash):
@@ -247,38 +246,86 @@ class Symmetric(object):
         return crypto_head + header + ct
 
 
-def test():
-    key1 = Crypt().generate_key()
-    key2 = Crypt().generate_key()
-    crypt1 = Crypt(key1, key2.publickey(), debug=True)
-    crypt2 = Crypt(key2, key1.publickey(), debug=True)
-    message = "this is a test"
-    data = crypt1.sign_and_encrypt(message)
-    if crypt2.decrypt_and_auth(data) == message:
-        print "Test pass"
-    else:
-        raise TypeError('TEST DID NOT PASS')
-
-
-def test_sym():
-    key = get_random_bytes(16)
-    sid = "12345678"
-    message = "This is the example message! " * 10
-    status = "OKOK"
-    c1 = Symmetric(key, sid)
-
-    packet = c1.encrypt_payload(message, status)
-
-    print c1.unpack_payload(packet)
-    crypt_header, header, body = c1.unpack_payload(packet)
-
-    c2 = Symmetric(key, sid)
-    c2.absorb_crypto_header(crypt_header)
-
-    print c2.decrypt_header(header)
-    print repr(c2.decrypt_body(body))
-
-
 if __name__ == '__main__':
-    # test()
+    def test():
+        key1 = Crypt().generate_key()
+        key2 = Crypt().generate_key()
+        crypt1 = Crypt(key1, key2.publickey(), debug=True)
+        crypt2 = Crypt(key2, key1.publickey(), debug=True)
+        message = "this is a test"
+        data = crypt1.sign_and_encrypt(message)
+        if crypt2.decrypt_and_auth(data) == message:
+            print "Test pass"
+        else:
+            raise TypeError('TEST DID NOT PASS')
+
+    def test_sym():
+        key = get_random_bytes(16)
+        sid = "12345678"
+        message = "This is the example message! " * 10
+        status = "OKOK"
+        c1 = Symmetric(key, sid)
+
+        packet = c1.encrypt_payload(message, status)
+
+        print c1.unpack_payload(packet)
+        crypt_header, header, body = c1.unpack_payload(packet)
+
+        c2 = Symmetric(key, sid)
+        c2.absorb_crypto_header(crypt_header)
+
+        print c2.decrypt_header(header)
+        print repr(c2.decrypt_body(body))
+
+    def benchmark():
+        print "Starting benchmarking..."
+        print
+
+        ROUNDSSYM = 100
+        ROUNDSASYM = 100
+
+        k1 = Crypt().generate_key()
+        k2 = Crypt().generate_key()
+        crypt_en = Crypt(private_key=k1, public_key=k2.publickey())
+        crypt_de = Crypt(private_key=k2, public_key=k1.publickey())
+
+        data = ["a" * (10 ** b) for b in range(6)]
+        databig = ["a" * (10 ** b) for b in range(8)]
+        cts = [crypt_en.sign_and_encrypt(d) for d in data]
+
+        times = [(timeit.timeit((lambda: crypt_en.sign_and_encrypt(d)), number=ROUNDSASYM) / ROUNDSASYM) for d in data]
+        print "Crypt().sign_and_encrypt() times:"
+        for d, t in zip(data, times):
+            print "%10dB: %f sec" % (len(d), t)
+        print
+
+        times = [(timeit.timeit((lambda: crypt_de.decrypt_and_auth(ct)), number=ROUNDSASYM) / ROUNDSASYM) for ct in cts]
+        print "Crypt().decrypt_and_auth() times:"
+        for d, t in zip(data, times):
+            print "%10dB: %f sec" % (len(d), t)
+        print
+
+        symkey = Symmetric().generate()
+        sym = Symmetric(symkey)
+        cts = [sym.unpack_payload(sym.encrypt_payload(d, "TEST")) for d in databig]
+
+        times = [(timeit.timeit((lambda: sym.encrypt_payload(d, "TEST")), number=ROUNDSSYM) / ROUNDSSYM) for d in databig]
+        print "Symmetric().encrypt_payload() times:"
+        for d, t in zip(databig, times):
+            print "%10dB: %f sec" % (len(d), t)
+        print
+
+        def dec((ch, h, b)):
+            sym.absorb_crypto_header(ch)
+            sym.decrypt_header(h)
+            sym.decrypt_body(b)
+
+        times = [(timeit.timeit((lambda: dec(ct)), number=ROUNDSSYM) / ROUNDSSYM) for ct in cts]
+        print "Symmetric().decrypt times:"
+        for d, t in zip(databig, times):
+            print "%10dB: %f sec" % (len(d), t)
+        print
+
+    test()
     test_sym()
+    benchmark()
