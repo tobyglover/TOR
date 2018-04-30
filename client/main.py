@@ -3,7 +3,7 @@ import logging
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 from SocketServer import ThreadingMixIn
 import sys
-from TorPathingServer import TORPathingServer, PathingFailed, TestTORPathingServer
+from TorPathingServer import TORPathingServer, PathingFailed
 from TorRouter import TorRouterInterface, TestTorRouterInterface, CircuitFailed
 from Crypt import Crypt
 from Crypto.PublicKey import RSA

@@ -31,6 +31,13 @@ can be added and removed at will. Finally, so long as the Pathfinding Server
 and at least three Tor Routers are running, the Tor client can be run.
 
 
+## Local Setup
+
+To run all components locally, the `run_local.sh` and `kill_local.sh` may be used. 
+`run_local.sh` spins up a pathing server, three routers, and a client on 
+127.0.0.1:7000.
+
+
 ## Tor Pathfinding Server Setup
 
 The Pathfinding Server must be set up on a server with a static IP on a port
