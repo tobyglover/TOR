@@ -77,15 +77,16 @@ class TCPHandler(BaseRequestHandler):
         if not router is None:
             router.set_daemon_port(daemon_port)
 
-    def _determine_test_router(self, from_router_id):
-        from_router = self.server.routers.get_router(from_router_id)
-        if from_router is None:
-            return None
-        return self.server.conn_graph.get_next_test(from_router)
-
     def _test_connection(self, request):
-        router_id = request
-        to_router = self._determine_test_router(router_id)
+        (router_id, daemon_port) = struct.unpack("!%dsI" % ROUTER_ID_SIZE, request)
+        from_router = self.server.routers.get_router(router_id)
+        if from_router is None:
+            return
+        elif from_router.get_daemon_port() is None:
+            print daemon_port
+            from_router.set_daemon_port(daemon_port)
+
+        to_router = self.server.conn_graph.get_next_test(from_router)
 
         print self.server.conn_graph
 

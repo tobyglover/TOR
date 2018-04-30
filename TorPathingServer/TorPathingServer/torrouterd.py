@@ -52,10 +52,11 @@ class Reporter(object):
         self._router_key = router_private_key
         self._router_id = router_id
         self._server_pubkey = server_pubkey
+        self._own_port = own_port
         if self._server_pubkey is None:
             self._server_pubkey = get_server_public_key()
 
-        self._register(own_port)
+        # self._register(own_port)
 
     def _newconnection(self):
         return Connection(self._server_ip, self._server_port, CONN_KEY, self._server_pubkey)
@@ -86,7 +87,8 @@ class Reporter(object):
     def _begin_heartbeat(self):
         while True:
             conn = self._newconnection()
-            conn.send(struct.pack("!c%ds" % ROUTER_ID_SIZE, MSG_TYPES.TEST_CONNECTION, self._router_id))
+            print self._own_port
+            conn.send(struct.pack("!c%dsI" % ROUTER_ID_SIZE, MSG_TYPES.TEST_CONNECTION, self._router_id, self._own_port))
             data = conn.receive(1024)
             if data[:4] != "NONE":
                 self._test_connection(data)
