@@ -1,3 +1,7 @@
+# Tor Network
+
+*_DISCLAIMER: THIS PROJECT HAS NOT BEEN FORMALLY VETTED AND SHOULD NOT BE CONSIDERED FULLY SECURE_*
+
 ## Purpose
 Tor provides an anonymous, secure, and distributed connection to HTTP web resources.
 Using _onion encryption_, Tor allows for anonymous and confidential connections
@@ -29,6 +33,13 @@ Afterwards, the individual components must be set up. First, the Pathfinding
 Server must be started before any other components. Then, the Tor routers
 can be added and removed at will. Finally, so long as the Pathfinding Server
 and at least three Tor Routers are running, the Tor client can be run.
+
+
+## Local Full-System Setup
+
+To run all components locally for sanity-checks and testing, the `run_local.sh` and 
+`kill_local.sh` may be used. `run_local.sh` spins up a pathing server, three routers, 
+and a client on 127.0.0.1:7000.
 
 
 ## Tor Pathfinding Server Setup
@@ -97,11 +108,12 @@ After the Tor Pathfinding Server and at least three Tor Routers have been set up
 the Tor Client is ready to be connected. The Client can be started with:
 
 ```
-python ./client/main.py <PORT> <PF_IP> <PF_PORT>
+python ./client/main.py <PORT> <PF_IP> <PF_PORT> <PUBKEY_PATH>
 ```
 
 Where `<PORT>` is the port to host the client proxy on and `<PF_IP>` and `<PF_PORT>`
-are the IP and port of the Pathfinding Server.
+are the IP and port of the Pathfinding Server and `<PUBKEY_PATH>` is the path to the 
+public key of the Pathfinding Server.
 
 After the Client is running and a path has been established, the local proxy
 settings must be changed to aim at `127.0.0.1:<PORT>`.
